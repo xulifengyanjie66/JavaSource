@@ -303,5 +303,36 @@ public class ThreadLocal<T> {
 ### 2.2 ThreadLocalMap与Entry之间关系
 由上面的代码可以看出ThreadLocalMap内部又有一个静态内部类Entry,他继承了弱引用WeakReference，并指定泛型ThreadLocal,这表明如果ThreadLocal没有强引用指向将会被垃圾回收器回收。而对于Thread类，有个成员属性ThreadLocalMap，他是每个线程独有的，线程通过这个ThreadLocalMap达到不同线程进行数据隔离的。
 
-### 2.3 ThreadLocalMap中构造方法里面的参数的含义
+### 2.3 ThreadLocalMap中成员属性参数的含义
+知道了上面各个类之间的关系,我们还要了解一下ThreadLocalMap的成员属性的含义，以便我们可以更好的看懂源码。
 
+1.private Entry[] table;声明一个类型是Entry的数组。
+
+2.private static final int INITIAL_CAPACITY = 16; 代表table指向的Entry[]数组初始化数组大小为16。
+
+3.private int size = 0;代表table数组中已经存在的元素数量。
+
+4.private int threshold;代表扩容的参数，首次设置为10，threshold = 16* 2 / 3。
+
+5.private final int threadLocalHashCode = nextHashCode(),它的值是nextHashCode.getAndAdd(HASH_INCREMENT),nextHashCode是一个AtomicInteger类型，HASH_INCREMENT值固定是0x61c88647，该成员变量的作用是用于为每个ThreadLocal实例生成唯一的哈希码。
+
+### 2.4 ThreadLocal的set方法源码分析
+set方法的源码如下所示:
+```java
+private void set(Thread t, T value) {
+    ThreadLocalMap map = getMap(t);
+    if (map != null) {
+        map.set(this, value);
+    } else {
+        createMap(t, value);
+    }
+}
+```
+从上面的代码可以看出这块分为两个分支，一个是当前线程的Thread的ThreadLocalMap不为空，一个为空，那首次进入的时候指定是为空的，那么我们先分析createMap(t,value)的源码。
+#### 2.4.1 createMap方法源码分析
+createMap方法的源码如下所示：
+```java
+void createMap(Thread t, T firstValue) {
+    t.threadLocals = new ThreadLocalMap(this, firstValue);
+}
+```
