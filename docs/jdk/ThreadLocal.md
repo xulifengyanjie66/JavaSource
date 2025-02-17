@@ -336,3 +336,45 @@ void createMap(Thread t, T firstValue) {
     t.threadLocals = new ThreadLocalMap(this, firstValue);
 }
 ```
+这个方法给Thread的成员变量threadLocals即ThreadLocal.ThreadLocalMap threadLocals赋值，调用ThreadLocalMap的构造方法，代码如下：
+``` java
+ThreadLocalMap(ThreadLocal<?> firstKey, Object firstValue) {
+table = new Entry[INITIAL_CAPACITY];
+int i = firstKey.threadLocalHashCode & (INITIAL_CAPACITY - 1);
+table[i] = new Entry(firstKey, firstValue);
+size = 1;
+setThreshold(INITIAL_CAPACITY);
+}
+```
+我们来看看ThreadLocalMap的构造函数都做了什么，首先先创建了一个16个长度的Entry的数组，通过threadLocalHashCode按位与操作获取获取一个i，这个i决定了在数组中的什么位置上存储，在数组的i位置创建一个Entry对象，其中firstKey参数就是ThreadLocal实例对象，firstValue代表要存储的值，把size值赋值为1，设置hreshold = 16* 2 / 3，即是10。
+createMap方法还是比较简单的就是一些初始化操作，相信大家都能看得懂。
+
+#### 2.4.2 map.set(this, value)方法源码分析
+
+如果第二次再调用ThredLocal的set方法,先获取ThreadLocalMap对象,由于此时该对象不为空，就会调用该对象的set方法，该方法的代码如下：
+``` java
+private void set(ThreadLocal<?> key, Object value) {
+    Entry[] tab = table;
+    int len = tab.length;
+    int i = key.threadLocalHashCode & (len-1);
+
+    for (Entry e = tab[i];
+         e != null;
+         e = tab[i = nextIndex(i, len)]) {
+        if (e.refersTo(key)) {
+            e.value = value;
+            return;
+        }
+
+        if (e.refersTo(null)) {
+            replaceStaleEntry(key, value, i);
+            return;
+        }
+    }
+
+    tab[i] = new Entry(key, value);
+    int sz = ++size;
+    if (!cleanSomeSlots(i, sz) && sz >= threshold)
+        rehash();
+}
+```
