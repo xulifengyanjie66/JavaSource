@@ -378,3 +378,62 @@ private void set(ThreadLocal<?> key, Object value) {
         rehash();
 }
 ```
+同样根据ThreadLocal对象获取hashCode值在与上数组长度减去1得到下标,得到table数组中的存储位置，接着执行一个for循环，把tab[i]做为初始值，判断tab[i]位置是否有元素存在，这里先分析存在的情况，什么时候会存在那，就是同一个ThreadLocal对象调用了多次set方法，计算出的i值一直都是相同的，那么tab[i]值就不为空，接着调用Entry对象的refersTo方法，传入当前ThreadLocal对象，判断弱引用持有的对象是否是当前ThreadLocal对象，如果是把Entry的value成员属性替换设置为新传入的value值，然后方法结束执行;
+还有一种情况就是就是发生了hash冲突，ThreadLocal对象不同，但是得到的下标相同，所以for循环的if条件都不成立，此时会新建一个Entry对象并把size值加一,这里加入发生冲突的i=3,那么for循环的条件都执行完成以后，i=4,为什么那，因为这段代码 e = tab[i = nextIndex(i, len)]，执行了i=nextIndex,该方法签名如下：
+``` java
+ private static int nextIndex(int i, int len) {
+            return ((i + 1 < len) ? i + 1 : 0);
+}
+```
+可以看出判断当前i+1如果小于数组长度就返回i+1,否则返回0，那么我们假如没超过数组长度那么加一就是返回4，不同的冲突元素会放在数值不同位置这与HashMap发生冲突时候不同，不是放在链表而是放在不同数组位置，这叫做开放地址法解决冲突，感兴趣的小伙伴可以自己查询一下这个解决冲突的原理。
+
+回过头我们再看for循环的if语句中的一段逻辑，代码如下
+```java
+ if (e.refersTo(null)) {
+            replaceStaleEntry(key, value, i);
+            return;
+}
+```
+如果当前元素强引用为空，即没人指向它，由于ThreadLocal是弱引用会被回收，refersTo判断等于null,此时调用replaceStaleEntry方法进行处理，该方法的签名如下:
+```java
+private void replaceStaleEntry(ThreadLocal<?> key, Object value,
+                               int staleSlot) {
+    Entry[] tab = table;
+    int len = tab.length;
+    Entry e;
+    int slotToExpunge = staleSlot;
+    for (int i = prevIndex(staleSlot, len);
+         (e = tab[i]) != null;
+         i = prevIndex(i, len))
+        if (e.refersTo(null))
+            slotToExpunge = i;
+    for (int i = nextIndex(staleSlot, len);
+         (e = tab[i]) != null;
+         i = nextIndex(i, len)) {
+        if (e.refersTo(key)) {
+            e.value = value;
+            tab[i] = tab[staleSlot];
+            tab[staleSlot] = e;
+            if (slotToExpunge == staleSlot)
+                slotToExpunge = i;
+            cleanSomeSlots(expungeStaleEntry(slotToExpunge), len);
+            return;
+        }
+
+        if (e.refersTo(null) && slotToExpunge == staleSlot)
+            slotToExpunge = i;
+    }
+
+    tab[staleSlot].value = null;
+    tab[staleSlot] = new Entry(key, value);
+    if (slotToExpunge != staleSlot)
+        cleanSomeSlots(expungeStaleEntry(slotToExpunge), len);
+}
+```
+replaceStaleEntry() 方法并非简单地使用新entry替换过期entry，而是从过期entry所在的slot（staleSlot）向前、向后查找过期entry，并通过slotToExpunge 标记过期entry最早的index，最后使用cleanSomeSlots() 方法从slotToExpunge开始清理过期entry。先是一个for循环初始化条件是i=prevIndex(staleSlot, len),方法prevIndex的方法签名是这样的：
+```java
+private static int prevIndex(int i, int len) {
+    return ((i - 1 >= 0) ? i - 1 : len - 1);
+}
+```
+如果i-1值大于0返回i-1的值，小于返回len-1值，计算tab[i]值，如果tab[i]不为空判断当前元素的ThreadLocal是否已经被GC回收，如果被回收了，把slotToExpunge设置为当前循环的下标，继续向前操作直到table中的元素为null,slotToExpunge值变成最后一个tab[i]不为空的下标值。可以看出如果i+1小于数组长度，就一直往后遍历，如果大于数组长度就从0开始遍历，每次遍历碰到元素不为空,由于开放定址法，可能相同的key存放于预期的位置（staleSlot）之后,即如果算出当前staleSlot=7，那么冲突的元素有可能在位置8上，所以此处判断元素是否和传递ThreadLocal是否相等，如果遇到相同的key，则更新value，并交换索引staleSlot与索引i的entry，判断slotToExpunge == staleSlot是否相等，如果相等说明向前遍历的没找到过期元素，更新slotToExpunge为当前索引下标值。从slotToExpunge开始，清理一些过期entry，清理方法我稍后再说。如果没有找到相同的key,继续向后查找，未找到过期entry，更新slotToExpunge为当前index
