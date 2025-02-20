@@ -436,4 +436,82 @@ private static int prevIndex(int i, int len) {
     return ((i - 1 >= 0) ? i - 1 : len - 1);
 }
 ```
-如果i-1值大于0返回i-1的值，小于返回len-1值，计算tab[i]值，如果tab[i]不为空判断当前元素的ThreadLocal是否已经被GC回收，如果被回收了，把slotToExpunge设置为当前循环的下标，继续向前操作直到table中的元素为null,slotToExpunge值变成最后一个tab[i]不为空的下标值。可以看出如果i+1小于数组长度，就一直往后遍历，如果大于数组长度就从0开始遍历，每次遍历碰到元素不为空,由于开放定址法，可能相同的key存放于预期的位置（staleSlot）之后,即如果算出当前staleSlot=7，那么冲突的元素有可能在位置8上，所以此处判断元素是否和传递ThreadLocal是否相等，如果遇到相同的key，则更新value，并交换索引staleSlot与索引i的entry，判断slotToExpunge == staleSlot是否相等，如果相等说明向前遍历的没找到过期元素，更新slotToExpunge为当前索引下标值。从slotToExpunge开始，清理一些过期entry，清理方法我稍后再说。如果没有找到相同的key,继续向后查找，未找到过期entry，更新slotToExpunge为当前index
+如果i-1值大于0返回i-1的值，小于返回len-1值，计算tab[i]值，如果tab[i]不为空判断当前元素的ThreadLocal是否已经被GC回收，如果被回收了，把slotToExpunge设置为当前循环的下标，继续向前操作直到table中的元素为null,slotToExpunge值变成最后一个tab[i]不为空的下标值。
+
+接着执行在for循环执行nextIndex方法，该方法在上面已经说过了，如果小于数组长度，返回当前下标加一的值，如果大于数组长度就从0开始遍历，每次遍历碰到元素不为空,由于开放定址法，可能相同的key存放于预期的位置（staleSlot）之后,即如果算出当前staleSlot=7，那么冲突的元素有可能在位置8上，所以此处判断元素是否和传递ThreadLocal是否相等，如果遇到相同的key，则更新value，并交换索引staleSlot与索引i的entry，判断slotToExpunge == staleSlot是否相等，如果相等说明向前遍历的没找到过期元素，更新slotToExpunge为当前索引下标值。从slotToExpunge开始，清理一些过期entry，这是会调用到方法expungeStaleEntry,该方法签名如下:
+```java
+ private int expungeStaleEntry(int staleSlot) {
+            Entry[] tab = table;
+            int len = tab.length;
+
+            // expunge entry at staleSlot
+            tab[staleSlot].value = null;
+            tab[staleSlot] = null;
+            size--;
+
+            // Rehash until we encounter null
+            Entry e;
+            int i;
+            for (i = nextIndex(staleSlot, len);
+                 (e = tab[i]) != null;
+                 i = nextIndex(i, len)) {
+                ThreadLocal<?> k = e.get();
+                if (k == null) {
+                    e.value = null;
+                    tab[i] = null;
+                    size--;
+                } else {
+                    int h = k.threadLocalHashCode & (len - 1);
+                    if (h != i) {
+                        tab[i] = null;
+
+                        // Unlike Knuth 6.4 Algorithm R, we must scan until
+                        // null because multiple entries could have been stale.
+                        while (tab[h] != null)
+                            h = nextIndex(h, len);
+                        tab[h] = e;
+                    }
+                }
+            }
+            return i;
+}
+```
+这个方法举个上面说的例子，比如下标7上ThreadLocal被GC清除了，但是在下标8的位置上找到了要放的ThreadLocal,那么就把这个ThreadLocal放在下标为7的位置，把8的下标位置元素Entry的key和value都置为null,便于垃圾回收。
+这块可以画个图理解一下，
+在执行代码tab[i] = tab[staleSlot]; tab[staleSlot] = e;交换前，内容结构图假如是这样的:
+![img1.jpg](..%2Fimg%2Fimg1.jpg)
+此时交换完成以后,下标7即staleSlot=7位置是元素e,下标8的ThreadLocal为null,此时执行方法expungeStaleEntry就清除8下标Entry对应的key和value,便于GC进行垃圾回收。
+然后把size做减一操作，接着执行for循环把下标继续加1，判断如果ThreadLocal为空，同样把Entry对应的key,value设置为null,size减一，如果不为空取出ThreadLocal的下标，
+判断如何当前元素的下标和计算出来的下标不一样，把当前下标的对应元素设置为null,循环while判断tab[h]如果为空，把元素放到对应位置上，最终返回i的值，也就是前面for循环e = tab[i]) = null条件。
+
+expungeStaleEntry方法执行完成以后返回到replaceStaleEntry接着又调用了cleanSomeSlots方法,该方法签名如下:
+```java
+private boolean cleanSomeSlots(int i, int n) {
+            boolean removed = false;
+            Entry[] tab = table;
+            int len = tab.length;
+            do {
+                i = nextIndex(i, len);
+                Entry e = tab[i];
+                if (e != null && e.refersTo(null)) {
+                    n = len;
+                    removed = true;
+                    i = expungeStaleEntry(i);
+                }
+            } while ( (n >>>= 1) != 0);
+            return removed;
+}
+```
+这段代码其实也是调用expungeStaleEntry方法进行清除操作，只不过while循环条件限制为n >>>= 1,实现约 log2(n) 次探测,每次都是折半的,
+目的是避免全表扫描，举个例子，
+假设哈希表长度为 16，初始 n = 4，探测步骤如下：
+初始状态：i = 3, n = 4
+循环 4 次（4 → 2 → 1 → 0）
+第一次循环：
+i = 4，发现无效 Entry
+设置 n = 16，触发 expungeStaleEntry(4)
+后续循环：
+n 变为 8 → 4 → 2 → 1 → 0（共 5 次额外探测）
+总探测次数 = 初始 4 次 + 重置后 5 次 = 9 次（远小于全表 16 次）
+
+至此ThreadLocal的set源码算是分析清楚了，这里面expungeStaleEntry方法和cleanSomeSlots方法比较难理解，需要大家有点空间想象能力。
