@@ -515,3 +515,73 @@ n 变为 8 → 4 → 2 → 1 → 0（共 5 次额外探测）
 总探测次数 = 初始 4 次 + 重置后 5 次 = 9 次（远小于全表 16 次）
 
 至此ThreadLocal的set源码算是分析清楚了，这里面expungeStaleEntry方法和cleanSomeSlots方法比较难理解，需要大家有点空间想象能力。
+
+### 2.5 ThreadLocal的get方法源码分析
+我们先看看get方法的签名:
+```java
+private T get(Thread t) {
+    ThreadLocalMap map = getMap(t);
+    if (map != null) {
+        ThreadLocalMap.Entry e = map.getEntry(this);
+        if (e != null) {
+            @SuppressWarnings("unchecked")
+            T result = (T) e.value;
+            return result;
+        }
+    }
+    return setInitialValue(t);
+}
+```
+从当前线程中取出ThreadLocalMap,如果ThreadLocalMap不为空，调用getEntry方法，参数是ThreadLocal对象，getEntry方法签名如下:
+```java
+ private Entry getEntry(ThreadLocal<?> key) {
+            int i = key.threadLocalHashCode & (table.length - 1);
+            Entry e = table[i];
+            if (e != null && e.refersTo(key))
+                return e;
+            else
+                return getEntryAfterMiss(key, i, e);
+}
+```
+计算出ThreadLocal对象的下标，通过下标获取数组中的Entry对象，如果Entry对象不为空并且传入的ThreadLocal和查询出的Entry的key一样直接返回Entry对象,
+如果不一样说明发生了冲突当前的ThreadLocal被存在别的下标位置上了，调用getEntryAfterMiss方法,该方法的签名如下:
+```java
+ private Entry getEntryAfterMiss(ThreadLocal<?> key, int i, Entry e){
+        Entry[]tab=table;
+        int len=tab.length;
+
+        while(e!=null){
+        if(e.refersTo(key))
+        return e;
+        if(e.refersTo(null))
+        expungeStaleEntry(i);
+        else
+        i=nextIndex(i,len);
+        e=tab[i];
+        }
+        return null;
+}
+```
+判断如果为空调用expungeStaleEntry方法清除无用的Entry对象，如果不为空就继续向前找得到下标，根据下标得到元素Entry，继续while循环判断得到元素Entry,判断是否相等，如果Entry为空了，说明没有相等的，返回null,get方法的逻辑还是比较简单的。
+
+### 2.6 ThreadLocal的remove方法源码分析
+该方法的签名如下：
+```java
+  private void remove(ThreadLocal<?> key) {
+            Entry[] tab = table;
+            int len = tab.length;
+            int i = key.threadLocalHashCode & (len-1);
+            for (Entry e = tab[i];
+                 e != null;
+                 e = tab[i = nextIndex(i, len)]) {
+                if (e.refersTo(key)) {
+                    e.clear();
+                    expungeStaleEntry(i);
+                    return;
+                }
+            }
+}
+```
+该方法逻辑同样很简单，获取到当前的ThreadLocal对象，计算出下标，如果得到元素Entry不为空，调用clear方法进行回收，然后又调用expungeStaleEntry方法清除无用的Entry对象。
+
+至此ThreadLocal的主要方法set、get、remove方法都已经分析完成，希望对大家有所帮助。
