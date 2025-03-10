@@ -130,7 +130,7 @@ public Object clone() {
 
 数组拷贝：Arrays.copyOf 复制原数组的有效部分（size 长度），避免保留多余容量。
 
-### 3.ArrayList的几个构造函数详解
+### 三、 ArrayList的几个构造函数详解
 
 **3.1 默认构造器：懒加载策略与10容量奥秘**
 
@@ -258,4 +258,92 @@ public ArrayList(Collection<? extends E> c) {
 |扩容开销	|可能多次扩容（最差O(log n)次）	|  无（若容量足够）	  | 无（容量精确匹配集合大小）|
 |线程安全性	| 非线程安全	|   非线程安全	    | 非线程安全	|
 
+## 四、核心方法源码解析
+**1. ArrayList的add方法源码分析**
 
+首先我们看该方法的签名,我用的是jdk21:
+```java
+public boolean add(E e) {
+    modCount++;
+    add(e, elementData, size);
+    return true;
+}
+
+private void add(E e, Object[] elementData, int s) {
+        if (s == elementData.length)
+        elementData = grow();
+        elementData[s] = e;
+        size = s + 1;
+}
+private Object[] grow() {
+    return grow(size + 1);
+}
+private Object[] grow(int minCapacity) {
+    int oldCapacity = elementData.length;
+    if (oldCapacity > 0 || elementData != DEFAULTCAPACITY_EMPTY_ELEMENTDATA) {
+        int newCapacity = ArraysSupport.newLength(oldCapacity,
+        minCapacity - oldCapacity, /* minimum growth */
+        oldCapacity >> 1           /* preferred growth */);
+        return elementData = Arrays.copyOf(elementData, newCapacity);
+    } 
+    else {
+    return elementData = new Object[Math.max(DEFAULT_CAPACITY, minCapacity)];
+    }
+}
+
+public static int newLength(int oldLength, int minGrowth, int prefGrowth) {
+       
+    int prefLength = oldLength + Math.max(minGrowth, prefGrowth); 
+    if (0 < prefLength && prefLength <= SOFT_MAX_ARRAY_LENGTH) {
+    return prefLength;
+    } else {
+    // put code cold in a separate method
+    return hugeLength(oldLength, minGrowth);
+    }
+}
+
+private static int hugeLength(int oldLength, int minGrowth) {
+    int minLength = oldLength + minGrowth;
+    if (minLength < 0) {
+        throw new OutOfMemoryError(
+        "Required array length " + oldLength + " + " + minGrowth + " is too large");
+    } 
+    else if (minLength <= SOFT_MAX_ARRAY_LENGTH) {
+      return SOFT_MAX_ARRAY_LENGTH;
+    } else {
+    return minLength;
+    }
+}
+```
+从add方法开始调用了重载方法，之后又调用了grow的重载方法，我一步步分析。
+首先把modCount值自增加1,它记录了结构性修改的次数，主要是实现Fail-Fast机制，主要是迭代遍历时候防止被其他线程修改，如果修改抛出
+ConcurrentModificationException，接着调用add方法,传入要添加的元素e,Object类型数组elementData,s代表集合中元素个数，首次添加时候是
+0,第一次添加由于Object数组elementData的长度是0,前面也说了属于惰性的思想，会调用grow方法，grow又调用了重载还是把minCapacity的值设为1传入，把数组长度赋值
+给oldCapacity,判断它是否大于0或者elementData不是空数组，很显然第一次添加不满足这个条件走到else语句，初始化数组长度是10，然后grow方法执行结束返回到add
+方法，此时elementData数组下标0的元素是e,size的值1，执行结束。
+
+由于数组初始化长度是10，当添加第十一个元素时候又走到grow(int minCapactiy)方法，此时判断oldCapacity是否大于0，
+很显然是大于0，走到if语句中，此次调用了ArraysSupport.newLength方法，传入参数是oldCapacity=10，minCapacity - oldCapacity=11-10,
+oldCapacity >> 1=10 >> 1,右移1位，得到的值是5,执行int prefLength = oldLength + Math.max(minGrowth, prefGrowth);
+这里面的逻辑是新容量优先选择旧容量 + 首选增长量但如果首选增长量 < 最小增长量,则选择旧容量 + 最小增长量。如果prefLength小于Integer的最大长度-8返回
+prefLength的值，若计算值超过SOFT_MAX_ARRAY_LENGTH,调用hugeLength方法，判断minLength<0,说明整数溢出抛出错误异常，
+若必须扩容到 minLength 超过SOFT_MAX_ARRAY_LENGTH，则允许扩容到 Integer.MAX_VALUE。得到最终容量是之前的1.5倍，即新数组的容量是15，
+调用Arrays.copyOf(elementData, newCapacity)方法复制数组，把elementData引用指向复制后的新数组，之前的旧的数组会被
+GC垃圾收集器收集。这里有个问题需要思考一下为什么要扩容到1.5倍那，查阅相关资料得到这样的答案：
+
+**ArrayList选择1.5倍扩容是为了在性能（减少扩容次数）和内存利用率(避免过多浪费)之间取得平衡。这使得ArrayList在大部分应用场景下能提供良好的性能和较低的内存开销。**
+
+最后给大家出个ArrayList的add方法一个执行流程图方便理解：
+
+
+![img3.jpg](..%2Fimg%2Fimg3.jpg)
+
+**2. ArrayList的get方法源码分析**
+
+get方法比较简单就是取得给定下标在数组中的指定位置,相信大家都能看懂，我还是给出get方法的签名：
+```java
+@Override
+public E get(int index) {
+    return a[index];
+}
+```

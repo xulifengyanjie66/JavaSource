@@ -351,7 +351,7 @@ createMap方法还是比较简单的就是一些初始化操作，相信大家�
 
 #### 2.4.2 map.set(this, value)方法源码分析
 
-如果第二次再调用ThredLocal的set方法,先获取ThreadLocalMap对象,由于此时该对象不为空，就会调用该对象的set方法，该方法的代码如下：
+如果第二次再调用ThreadLocal的set方法,先获取ThreadLocalMap对象,由于此时该对象不为空，就会调用该对象的set方法，该方法的代码如下：
 ``` java
 private void set(ThreadLocal<?> key, Object value) {
     Entry[] tab = table;
@@ -584,4 +584,5 @@ private T get(Thread t) {
 ```
 该方法逻辑同样很简单，获取到当前的ThreadLocal对象，计算出下标，如果得到元素Entry不为空，调用clear方法进行回收，然后又调用expungeStaleEntry方法清除无用的Entry对象。
 
-至此ThreadLocal的主要方法set、get、remove方法都已经分析完成，希望对大家有所帮助。
+### 2.7 束语
+至此ThreadLocal的主要方法set、get、remove方法都已经分析完成，希望对大家有所帮助,你在使用 ThreadLocal 时遇到过什么问题？欢迎分享！
