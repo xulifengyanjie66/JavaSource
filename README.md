@@ -7,3 +7,4 @@
 - [Jdk源码](docs/collections/introduction.md)
   - [ThredLocal源码分析](docs/jdk/ThreadLocal.md)
   - [ArrayList源码分析](docs/jdk/ArrayList.md)
+  - [LinkedList源码分析](docs/jdk/LinkedList.md)
