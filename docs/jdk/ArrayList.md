@@ -130,7 +130,7 @@ public Object clone() {
 
 数组拷贝：Arrays.copyOf 复制原数组的有效部分（size 长度），避免保留多余容量。
 
-### 三、 ArrayList的几个构造函数详解
+## 三、 ArrayList的几个构造函数详解
 
 **3.1 默认构造器：懒加载策略与10容量奥秘**
 
@@ -347,3 +347,91 @@ public E get(int index) {
     return a[index];
 }
 ```
+**3. ArrayList的contains方法源码分析**
+
+contains方法的签名如下所示:
+```java
+public boolean contains(Object o) {
+    return indexOf(o) >= 0;
+}
+
+public int indexOf(Object o) {
+    return indexOfRange(o, 0, size);
+}
+
+int indexOfRange(Object o, int start, int end) {
+    Object[] es = elementData;
+    if (o == null) {
+        for (int i = start; i < end; i++) {
+            if (es[i] == null) {
+            return i;
+            }
+        }
+    } else {
+        for (int i = start; i < end; i++) {
+            if (o.equals(es[i])) {
+            return i;
+            }
+        }
+    }
+    return -1;
+}
+```
+可以看出传入Object类型的对象，调用indexOf方法最终调用了indexOfRange方法，入参有Object类型 o，起始位置int类型start=0,结束位置是int类型容器中元素的个数end=size,
+把elementData数组赋值给一个临时变量es,判断要包含的元素是否为null,如果为null,遍历从start-end下标值如果是null的返回下标值。
+
+如果不是null,调用equals方法比较对象是否相同，如果相等返回下标，如果不相等返回-1，根据返回下标判断是否大于等于0，如果是返回true,代表包含，否则不包含,这里需要注意一点如果是自定义的引用类型应该重写equals方法，保证符合业务逻辑，只要内容相同就代表包含这个对象。
+
+**4. ArrayList的remove方法源码分析**
+remove方法有两个重载的方法,一个参数类型是int的,代表根据下标删除对象，一个参数类型是Object的，代表根据对象删除,我们一个个来看，首先看根据下标删除的方法签名
+```java
+public E remove(int index) {
+    Objects.checkIndex(index, size);
+    final Object[] es = elementData;
+
+    @SuppressWarnings("unchecked") E oldValue = (E) es[index];
+    fastRemove(es, index);
+
+    return oldValue;
+}
+
+private void fastRemove(Object[] es, int i) {
+    modCount++;
+    final int newSize;
+    if ((newSize = size - 1) > i)
+    System.arraycopy(es, i + 1, es, i, newSize - i);
+    es[size = newSize] = null;
+}
+```
+根据传入的下标得到数组存储的值oldValue,然后调用fastRemove方法，modCount值自增1,定义变量newSize,
+把size-1赋值给newSize,并且判断是否大于传入的下标，如果大于，说明是移除中间的某个下标元素，调用System.arraycopy方法把下标i后面元素移动到要删除下标位置上，这样做的目的是使数组地址连续， 最后把newSize的值赋值给size并且把size处元素置为null最终返回oldValue值。
+
+下面我们来看看另一个重载方法remove的参数类型是Object的，方法签名如下:
+```java
+public boolean remove(Object o) {
+    final Object[] es = elementData;
+    final int size = this.size;
+    int i = 0;
+    found: {
+        if (o == null) {
+            for (; i < size; i++)
+                if (es[i] == null)
+                    break found;
+        } else {
+            for (; i < size; i++)
+                if (o.equals(es[i]))
+                    break found;
+        }
+        return false;
+    }
+    fastRemove(es, i);
+    return true;
+}
+```
+这个方法也比较简单，还是根据要删除对象，循环遍历比较equals方法如果有相等的就返回下标值，之后的调用和上面分析的逻辑一样，不在复述。
+
+## 五、结束语
+
+通过层层剖析ArrayList的源码，我们得以窥见Java集合框架的深邃智慧。Object[] elementData 的朴实无华，承载着动态扩容的灵活；size 字段的静默记录，维系着逻辑与物理的平衡；从默认构造器的懒加载策略到 grow()方法，每一行代码都在诉说着工程与艺术的交融。
+ArrayList 的设计，是时间与空间的博弈，是安全与效率的权衡，更是开发者与机器的默契。它用最简洁的数组结构，支撑起高频查询的极致性能；以看似平凡的增删逻辑，诠释了算法优化的精妙。
+然而，源码的魅力不止于理解，更在于启示。希望我们程序员都能写出高效的代码。
