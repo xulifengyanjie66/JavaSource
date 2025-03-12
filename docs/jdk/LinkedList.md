@@ -56,7 +56,7 @@
 
 ### 2.2 各个接口作用
 
-**1.List<E>（有序列表接口）**
+1. **List<E>**（有序列表接口）
 
 - 作用：提供按索引存取元素的方法，实现线性表的基本功能。
 - LinkedList 作为List的实现，可以存储有序的元素，并支持基于索引的操作。
@@ -73,7 +73,7 @@
  get(int index) 由于 LinkedList 采用双向链表，需要遍历查找索引位置，时间复杂度为 O(n)（不像 ArrayList 是 O(1)）。
 add/remove 在头部或尾部操作的时间复杂度是 O(1)。
 
-**2.Deque<E>(双端队列接口)**
+2. **Deque<E>** (双端队列接口)
 
 - 作用：允许两端进行插入和删除操作，支持队列和栈的特性。
 - LinkedList作为Deque的实现，可以当作双端队列（Double-Ended Queue）或栈（Stack)来使用。
@@ -106,7 +106,7 @@ add/remove 在头部或尾部操作的时间复杂度是 O(1)。
     stack.addFirst(2);
     System.out.println(stack.removeFirst()); // 出栈，输出 2
 ```
-**3.Cloneable（可克隆接口）**
+3. **Cloneable**（可克隆接口）
 - 作用：表示 LinkedList 可以被克隆，支持 clone() 方法。
 - 关键方法
 ```java
@@ -115,6 +115,7 @@ add/remove 在头部或尾部操作的时间复杂度是 O(1)。
 - 特点：
 - clone() 方法执行的是浅拷贝，不会复制存储的对象本身，而是复制引用。
 - 示例：
+
 ```java
 LinkedList<String> list1 = new LinkedList<>();
 list1.add("A");
@@ -126,12 +127,13 @@ list2.add("C");
 System.out.println(list1); // [A, B]
 System.out.println(list2); // [A, B, C]
 ```
-**4.Serializable（可序列化接口)**
+4. **Serializable**（可序列化接口)
 
 - 作用：使 LinkedList 支持序列化，可以将 LinkedList 对象转换为字节流，进行持久化存储或网络传输。
 
 - 实现原理： LinkedList 内部有 private static final long serialVersionUID = 876323262645176354L; 用于版本控制。
 - 关键方法：
+
 ```java
 private void writeObject(ObjectOutputStream s) throws IOException;
 private void readObject(ObjectInputStream s) throws IOException, ClassNotFoundException;
@@ -158,7 +160,7 @@ try (ObjectInputStream in = new ObjectInputStream(new FileInputStream("list.ser"
 }
 
 ```
-**5.AbstractSequentialList<E>（抽象顺序列表）**
+5. **AbstractSequentialList<E>**（抽象顺序列表）
 
 - 作用：LinkedList 继承了AbstractSequentialList，它是 List 的一个抽象实现，提供了基于顺序访问（Sequential Access）的列表操作。
 - 关键方法：
