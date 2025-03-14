@@ -289,3 +289,68 @@ l=last =null,新创建一个Node对象，把l赋值给Node成员属性prev,把e�
 
 通过这两次添加元素3，元素4都添加到链表上，总体结构是3是第一个元素，4是最后一个元素，他们之间通过prev,next互相指向，而且first指向元素3，last指向元素4，
 到这里add方法流程就分析完成了。
+
+### 5.2 add(int index, E element)方法
+
+下面我们来分析一下add的一个重载方法，根据下标插入元素的源码分析，该方法的签名如下所示：
+
+```java
+public void add(int index, E element) {
+    checkPositionIndex(index);
+
+    if (index == size)
+        linkLast(element);
+    else
+        linkBefore(element, node(index));
+}
+
+Node<E> node(int index) {
+
+    if (index < (size >> 1)) {
+        Node<E> x = first;
+        for (int i = 0; i < index; i++)
+        x = x.next;
+        return x;
+    } 
+    else {
+        Node<E> x = last;
+        for (int i = size - 1; i > index; i--)
+        x = x.prev;
+        return x;
+    }
+}
+
+void linkBefore(E e, Node<E> succ) {
+    final Node<E> pred = succ.prev;
+    final Node<E> newNode = new Node<>(pred, e, succ);
+    succ.prev = newNode;
+    if (pred == null)
+        first = newNode;
+    else
+      pred.next = newNode;
+    size++;
+    modCount++;
+}
+
+```
+
+该方法的主要作用是在指定索引位置插入元素，比如在索引位置1插入元素，那么原先索引位置是1的元素往后移动，新插入的元素的next指向原来位置元素，原来位置元素的prev
+指向新元素，下面我将详细分析其源码。
+
+调用checkPositionIndex校验传入的index下标是否小于0或者大于size值，如果是抛出下标越界异常IndexOutOfBoundsException，判断下标是否等于size值，如果是调用linkLast方法把元素添加到尾部，这个方法在add源码中已经分析了，此处不在赘述，
+如果不是调用linkBefore方法，该方法中又调用了node方法，从上面给出的源码可以看出有两个分支条件。
+
+- 如果index在前半部分（index < size/2），则从头结点开始查找。
+- 否则，从尾结点开始倒着查找，提高性能。
+
+**此处使用了二分优化查找的思想，提高遍历性能。**
+
+分析从头查找的逻辑，先把首节点first赋值给一个临时变量x,使用for循环以当前传入的下标为终止条件，如果小于就一直取得next节点赋值给x，直到条件不成立最终返回x。
+
+分析从尾查找的逻辑, 先把尾节点last赋值给一个临时变了x,使用for循环依次从size-1处递减直到小于传入的下标为终止条件，如果条件成立一直取得prev节点赋值给x,
+直到条件不成立最终返回x。
+
+上面找到要插入的元素，调用linkBefore在其之前执行插入操作,先找到succ位置的前驱节点pred,创建新节点newNode,使其prev指向pred,next指向succ。
+更新pred.next和succ.prev，完成插入,如果 pred 为空,说明succ原来是first,新节点需要变成first,至此根据下标插入元素的源码就分析完成了。
+
+
