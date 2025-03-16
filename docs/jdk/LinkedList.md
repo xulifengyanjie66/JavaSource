@@ -9,8 +9,8 @@
 - [4. 底层数据结构](#4-底层数据结构)
 - [5. 核心方法源码解析](#5-核心方法源码解析)
   - [5.1 add() 方法](#51-add-方法)
-  - [5.2 remove() 方法](#52-remove-方法)
-  - [5.3 get() 方法](#53-get-方法)
+  - [5.2 add(int,Object) 方法](#52-addint-index-e-element方法)
+  - [5.3 get() 方法](#53-getint-index方法)
 - [6. 迭代器实现](#6-迭代器实现)
  - [6.1 Iterator 迭代器](#61-iterator-迭代器)
  - [6.2 ListIterator 迭代器](#62-listiterator-迭代器)
@@ -353,4 +353,116 @@ void linkBefore(E e, Node<E> succ) {
 上面找到要插入的元素，调用linkBefore在其之前执行插入操作,先找到succ位置的前驱节点pred,创建新节点newNode,使其prev指向pred,next指向succ。
 更新pred.next和succ.prev，完成插入,如果 pred 为空,说明succ原来是first,新节点需要变成first,至此根据下标插入元素的源码就分析完成了。
 
+### 5.3 get(int index)方法
 
+该方法的签名如下:
+
+```java
+public E get(int index) {
+    checkElementIndex(index);
+    return node(index).item;
+}
+
+Node<E> node(int index) {
+    if (index < (size >> 1)) {
+        Node<E> x = first;
+        for (int i = 0; i < index; i++)
+        x = x.next;
+        return x;
+    } else {
+        Node<E> x = last;
+        for (int i = size - 1; i > index; i--)
+        x = x.prev;
+        return x;
+    }
+}
+```
+该方法同样是采用有二分优化查找的思想，从头或者从尾开始查找，直到找到符合条件的Node元素，然后获取里面的item属性值，这个方法比较简单,不在赘述。
+
+### 5.4 remove(int index)方法
+
+该方法的签名如下：
+
+```java
+public E remove(int index) {
+    checkElementIndex(index);
+    return unlink(node(index));
+}
+
+Node<E> node(int index) {
+    if (index < (size >> 1)) {
+        Node<E> x = first;
+        for (int i = 0; i < index; i++)
+        x = x.next;
+        return x;
+    } else {
+        Node<E> x = last;
+        for (int i = size - 1; i > index; i--)
+        x = x.prev;
+        return x;
+    }
+}
+
+E unlink(Node<E> x) {
+    final E element = x.item;
+    final Node<E> next = x.next;
+    final Node<E> prev = x.prev;
+    if (prev == null) {
+        first = next;
+    } else {
+        prev.next = next;
+        x.prev = null;
+    }
+
+    if (next == null) {
+        last = prev;
+    } else {
+        next.prev = prev;
+        x.next = null;
+    }
+    x.item = null;
+    size--;
+    modCount++;
+    return element;
+}
+```
+可以看出根据索引删除元素方法先是调用了node方法获取元素，这个方法在前面已经分析过了，就不再分析，我们主要看unlink方法。
+
+首先获取item属性值，即里面存储的元素值赋值给element变量，取得后置节点和前置节点分别赋值给next和prev变量，判断prev是否等于null,如果是null,说明
+删除的元素是头节点，那么头节点删除以后first应该指向next节点，如果不是头节点，把prev的next指向要删除元素的next节点，断开删除元素指向前置节点的引用。
+
+还有一直情况是判断next是否等于null,如果是null,说明删除的元素是尾节点，那删除尾节点以后last应该指向它的前置节点prev,如果不是尾节点，把next的prev指向
+要删除元素的prev,同时断开删除元素指向后置节点的引用，把删除元素的属性值置为null,size个数减1操作，modCount加1，最后返回临时变量element。
+
+大家可能觉得这个流程有点蒙，下面我给出一个流程图，如下图所示：
+
+![img7.jpg](..%2Fimg%2Fimg7.jpg)
+
+### 5.5 remove(Object o)方法
+
+该方法的签名如下：
+
+```java
+public boolean remove(Object o) {
+        if (o == null) {
+            for (Node<E> x = first; x != null; x = x.next) {
+                if (x.item == null) {
+                    unlink(x);
+                    return true;
+                }
+            }
+        } else {
+            for (Node<E> x = first; x != null; x = x.next) {
+                if (o.equals(x.item)) {
+                    unlink(x);
+                    return true;
+                }
+            }
+        }
+        return false;
+}
+```
+判断要删除的对象是否等于null,如果是null,从链表的头部开始遍历，如果有是null的节点就调用unlink方法移除该元素，这个方法跟上面调用的是同一个方法，如果不是null还是要遍历所有链表，
+调用对象的equals方法判断是否相等，如果相等同样调用unlink方法移除该元素。
+
+## 6. 迭代器实现
