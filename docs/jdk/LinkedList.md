@@ -12,13 +12,8 @@
   - [5.2 add(int,Object) 方法](#52-addint-index-e-element方法)
   - [5.3 get() 方法](#53-getint-index方法)
 - [6. 迭代器实现](#6-迭代器实现)
- - [6.1 Iterator 迭代器](#61-iterator-迭代器)
- - [6.2 ListIterator 迭代器](#62-listiterator-迭代器)
-- [7. 性能分析](#7-性能分析)
-- [8. 线程安全性](#8-线程安全性)
-- [9. 常见问题](#9-常见问题)
-- [10. 总结](#10-总结)
-- [11. 参考资料](#11-参考资料)
+ - [6.1 Iterator 迭代器](#61-listiterator迭代器)
+- [7. 总结](#7-总结)
 
 ---
 
@@ -466,3 +461,123 @@ public boolean remove(Object o) {
 调用对象的equals方法判断是否相等，如果相等同样调用unlink方法移除该元素。
 
 ## 6. 迭代器实现
+
+### 6.1 Listiterator迭代器
+
+**1. ListIterator 概述**
+
+这里我介绍一下Listiterator迭代器概念以及它能提供的功能。
+
+ListIterator是Iterator接口的扩展，专门用于List集合类型，它能够在集合中进行双向遍历。与 Iterator 只能向前遍历不同，ListIterator 允许我们从当前元素开始向前和向后遍历。除此之外，它还提供了以下几个主要的功能：
+
+- **前向遍历**：使用 next() 方法逐个返回元素。
+- **后向遍历**：使用 previous() 方法逐个返回元素（反向遍历）。
+- **修改元素**：使用 set(E e) 方法修改当前元素。
+- **添加元素**：使用 add(E e) 方法在当前位置插入一个新元素。
+- **删除元素**：使用 remove() 方法删除当前元素。
+
+**2. ListIterator使用示例**
+
+- 向前遍历
+
+```java
+import java.util.*;
+
+public class ListIteratorForwardExample {
+    public static void main(String[] args) {
+        LinkedList<String> list = new LinkedList<>(Arrays.asList("A", "B", "C", "D"));
+
+        ListIterator<String> listIterator = list.listIterator();
+
+        while (listIterator.hasNext()) {
+            System.out.println("向前遍历：" + listIterator.next());
+        }
+    }
+}
+```
+输出结果是：
+```css
+向前遍历：A
+向前遍历：B
+向前遍历：C
+向前遍历：D
+```
+- 向后遍历
+```java
+import java.util.*;
+
+public class ListIteratorBackwardExample {
+    public static void main(String[] args) {
+        LinkedList<String> list = new LinkedList<>(Arrays.asList("A", "B", "C", "D"));
+
+        ListIterator<String> listIterator = list.listIterator(list.size());
+
+        while (listIterator.hasPrevious()) {
+            System.out.println("向后遍历：" + listIterator.previous());
+        }
+    }
+}
+```
+输出结果是：
+
+```css
+向后遍历：D
+向后遍历：C
+向后遍历：B
+向后遍历：A
+```
+- 修改元素
+
+```java
+import java.util.*;
+
+public class ListIteratorModifyExample {
+    public static void main(String[] args) {
+        LinkedList<String> list = new LinkedList<>(Arrays.asList("A", "B", "C", "D"));
+
+        ListIterator<String> listIterator = list.listIterator();
+
+        while (listIterator.hasNext()) {
+            String current = listIterator.next();
+            if (current.equals("B")) {
+                listIterator.set("Z");  // 修改元素 B 为 Z
+            }
+        }
+
+        System.out.println(list);  // 输出：[A, Z, C, D]
+    }
+}
+```
+- 插入元素
+
+```java
+import java.util.*;
+
+public class ListIteratorAddExample {
+    public static void main(String[] args) {
+        LinkedList<String> list = new LinkedList<>(Arrays.asList("A", "B", "C", "D"));
+
+        ListIterator<String> listIterator = list.listIterator();
+
+        while (listIterator.hasNext()) {
+            String current = listIterator.next();
+            if (current.equals("B")) {
+                listIterator.add("Z");  // 在 B 后插入 Z
+            }
+        }
+
+        System.out.println(list);  // 输出：[A, B, Z, C, D]
+    }
+}
+
+```
+
+## 7. 总结
+
+本文深入分析了LinkedList与ArrayList在数据结构上的不同，探讨了它们的适用场景及时间复杂度对比。LinkedList作为一个基于双向链表的数据结构，在插入和删除操作方面表现优异，特别适用于频繁插入、删除的场景，而 ArrayList 则在随机访问方面更具优势。
+
+在源码分析部分，我们详细解读了LinkedList的底层实现，深入解析了add()方法的多个重载版本，了解了元素如何被插入到链表的不同位置。同时，我们分析了 get() 方法的源码，理解了 LinkedList 如何通过遍历获取元素，并探讨了 remove() 方法的具体实现，了解了删除操作如何调整链表的指针来维护数据结构的完整性。
+
+此外，本文还对 ListIterator 进行了详细介绍。ListIterator 作为 Iterator 的增强版，支持双向遍历、元素修改、插入和删除，在操作 LinkedList 时尤其高效，能够充分发挥链表结构的特点。
+
+通过这篇文章，相信你对 LinkedList 的内部实现有了更深入的理解，并能更合理地选择 LinkedList 或 ArrayList，在合适的场景下提高程序的性能和可读性。希望这篇文章能帮助你在 Java 集合框架的学习和应用中更进一步！
