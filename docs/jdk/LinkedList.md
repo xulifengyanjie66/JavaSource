@@ -12,7 +12,7 @@
   - [5.2 add(int,Object) 方法](#52-addint-index-e-element方法)
   - [5.3 get() 方法](#53-getint-index方法)
 - [6. 迭代器实现](#6-迭代器实现)
- - [6.1 Iterator 迭代器](#61-listiterator迭代器)
+  - [6.1 Iterator 迭代器](#61-listiterator迭代器)
 - [7. 总结](#7-总结)
 
 ---
