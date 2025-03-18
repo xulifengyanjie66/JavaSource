@@ -68,3 +68,26 @@ int bucket2 = mixedHash1 & (15); // 0xC → 避免冲突
    h >>> 16	将高16位移动到低16位	高16位信息参与低位混合
    h ^ (h >>> 16)	高低位信息混合	哈希值分布更均匀
    通过这种方式，Java的哈希函数在保持高效率的同时，显著降低了哈希冲突的概率。
+
+putVal的源码如下：
+定义四个变量分别如下：
+Node<K,V>[] tab; Node<K,V> p; int n, i
+把table赋值给临时变量tab，判断是否为空，添加指定为null,调用resize方法，把tab的长度赋值给一个临时变量oldCap,判断它是否大于0，那我们先
+分析首次肯定是不大于0的，所以newCap=DEFAULT_INITIAL_CAPACITY，DEFAULT_INITIAL_CAPACITY是多少那，它是 1 << 4,即16,newThr=0.75 * 16,
+把它赋值给成员变量threshold表示超过这个值就需要扩容，创建一个容量是16的Node数组，然后赋值给成员变量table,此时调用返回到putVal方法n=16,
+此时计算 (n-1) & hash计算出下标值i,判断tab[i]是否等于null,首次添加指定是null,那就新创建一个对象Node,把hash值赋值给成员变量hash,key,value同样赋值,next指向null。
+然后tab[i] =Node对象，修改次数成员变量modCount加1,size加1判断是否大于上面提到的threshold,如果大于就调用扩容方法，这里先暂且不分析扩容逻辑，就这样首次调用put方法逻辑
+就分析完成了。
+接着分析第二次添加的时候，假如此时发生了冲突，即p = tab[i = (n - 1) & hash]) != null,此时p的值是发生冲突时之前已经存在的值，此时分三种情况判断，
+判断要添加的hash是否等于冲突的hash值并且key是否相等，如果相等，说明两个对象是同一个对象，把p的值赋值给临时变量e,如果e不为空，先保留老的oldValue值,
+把之前的value值赋值为要添加的value,即覆盖已经存在的value值，返回老的value值。
+
+如果判断的hash值和要添加的hash值不相等或者key不相等，判断p是否是TreeNode对象，即红黑树对象，此次逻辑我咱不分析。
+
+如果也不是红黑树对象，走到else语句，这里首先是一个死循环for,for循环里面也有两个逻辑，如果冲突元素的next节点不等于null,
+此时e=p.next,判断e元素的hash值是否等于要添加的元素hash,e元素的key是否等于要添加的元素key,如果相等跳出for循环，后续还是把链表的值替换为
+要添加的value值，如果hash或者key不相等把p=e,此时又判断p.next是否等于空，如果为空，说明已经遍历到链表的结尾，此时p.next=新创建元素，此处有个判断逻辑是
+if (binCount >= TREEIFY_THRESHOLD - 1)
+treeifyBin(tab, hash);
+说明链表长度大于8了调用treeifyBin方法，这个方法又判断数组的长度是否大于64，如果大于转换为红黑树，如果小于就扩容，关于红黑树的逻辑这里还是先不介绍了，感兴趣的可以自己去看看。
+到此为止put的源码就分析完成了。
