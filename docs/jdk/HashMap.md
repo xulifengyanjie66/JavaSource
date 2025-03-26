@@ -4,28 +4,28 @@
 - [1. 引言](#1-引言)
 - [2. HashMap 的数据结构](#2-hashmap-的数据结构)
 - [3. HashMap 的核心参数](#3-hashmap-的核心参数)
-- [4. HashMap 的核心方法](#4-hashmap-的核心方法)
+- [4. HashMap 的核心方法](#4-hashmap的核心方法)
    - [4.1 hash() 方法解析](#41-hash-方法解析)
    - [4.2 put() 方法解析](#42-put-方法解析)
    - [4.3 get() 方法解析](#43-get-方法解析)
    - [4.4 resize() 扩容机制](#44-resize-扩容机制)
-- [5. HashMap 的线程安全问题](#5-hashmap-的线程安全问题)
+- [5. HashMap 的线程安全问题](#5-hashmap的线程安全问题)
 - [6. HashMap 的 JDK 版本演变](#6-hashmap-的-jdk-版本演变)
 - [7. 结论](#7-结论)
 
----
+
 
 ## 1. 引言
 `HashMap` 是 Java **最常用** 的集合之一，底层基于 **数组 + 链表 + 红黑树** 进行存储。本篇文章将分析 `HashMap` **源码**。
 
----
+
 ## 2. HashMap 的数据结构
 在 JDK 1.8 之前，`HashMap` 采用 **数组 + 链表** 结构，而JDK1.8之后，引入了 **红黑树** 来优化性能：
 - **数组（Node<K, V>[] table）**：存储键值对的主要结构。
 - **链表**：用于解决 **哈希碰撞**。
 - **红黑树**：当链表长度超过 `8` 时，会转换为 **红黑树** 以提高查找效率。
 
----
+
 
 ## 3. HashMap 的核心参数
 在 `HashMap` 中，常见的几个核心参数：
@@ -35,7 +35,7 @@
 - **TREEIFY_THRESHOLD = 8**（链表转换为红黑树的阈值）
 - **UNTREEIFY_THRESHOLD = 6**（红黑树退化为链表的阈值）
 
----
+
 
 ## 4. HashMap的核心方法
 ### 4.1 hash() 方法解析
@@ -301,11 +301,10 @@ loHead 低位链表 = 3 -> 7,loTail=7,do while执行以后判断loTail不等于n
   
 ### **5.1 线程安全解决方案**
 | 方案 | 说明 |
-|------|------|
-| `Collections.synchronizedMap(new HashMap<>())` | 适用于少量并发，性能较差 |
-| `ConcurrentHashMap` | 适用于高并发，底层采用分段锁 |
-| `Hashtable` | 线程安全，但效率较低 |
-
+|------|-----------------------------------|
+| `Collections.synchronizedMap(new HashMap<>())` | 适用于少量并发，使用 `synchronized`，性能较差 |
+| `ConcurrentHashMap` | 适用于高并发，JDK 8+ 采用 CAS + 自旋锁 |
+| `Hashtable` | 线程安全，但使用 `synchronized` 进行全表锁，效率较低 |
 **推荐** 在并发场景下使用 `ConcurrentHashMap`，而不是 `HashMap`。
 
 ---
