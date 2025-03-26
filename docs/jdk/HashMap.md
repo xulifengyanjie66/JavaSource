@@ -8,7 +8,7 @@
    - [4.1 hash() 方法解析](#41-hash-方法解析)
    - [4.2 put() 方法解析](#42-put-方法解析)
    - [4.3 get() 方法解析](#43-get-方法解析)
-   - [4.3 resize() 扩容机制](#43-resize-扩容机制)
+   - [4.4 resize() 扩容机制](#44-resize-扩容机制)
 - [5. HashMap 的线程安全问题](#5-hashmap-的线程安全问题)
 - [6. HashMap 的 JDK 版本演变](#6-hashmap-的-jdk-版本演变)
 - [7. 结论](#7-结论)
@@ -186,6 +186,109 @@ final Node<K,V> getNode(Object key) {
 &nbsp;&nbsp;如果条件成立first变量就是要找的元素，判断first的hash值与key计算的hash值是否相等并且first的key是否等于传入的key或者比较两者的equals值是否相等，如果都相等返回first,然后拿到里面的value属性返回。
 如果不相等说明发生了hash冲突,把first的next赋值给变量e,判断first是否是红黑树，如果是调用getTreeNode获取，如果不是说明是链表结构，进入一个do while循环，判断e的hash值是否等于key的hash值并且
 e的key是否等于key或者比较两者的equals值是否相等，如果不相等就一直获取当前元素的next节点直到相等为止返回元素的value值。
+
+### 4.4 resize() 扩容机制
+&nbsp;&nbsp;resize方法的签名如下:
+```java
+final Node<K,V>[] resize() {
+    Node<K,V>[] oldTab = table;
+    int oldCap = (oldTab == null) ? 0 : oldTab.length;
+    int oldThr = threshold;
+    int newCap, newThr = 0;
+    if (oldCap > 0) {
+        if (oldCap >= MAXIMUM_CAPACITY) {
+            threshold = Integer.MAX_VALUE;
+            return oldTab;
+        }
+        else if ((newCap = oldCap << 1) < MAXIMUM_CAPACITY &&
+                 oldCap >= DEFAULT_INITIAL_CAPACITY)
+            newThr = oldThr << 1; // double threshold
+    }
+    else if (oldThr > 0) // initial capacity was placed in threshold
+        newCap = oldThr;
+    else {               // zero initial threshold signifies using defaults
+        newCap = DEFAULT_INITIAL_CAPACITY;
+        newThr = (int)(DEFAULT_LOAD_FACTOR * DEFAULT_INITIAL_CAPACITY);
+    }
+    if (newThr == 0) {
+        float ft = (float)newCap * loadFactor;
+        newThr = (newCap < MAXIMUM_CAPACITY && ft < (float)MAXIMUM_CAPACITY ?
+                  (int)ft : Integer.MAX_VALUE);
+    }
+    threshold = newThr;
+    @SuppressWarnings({"rawtypes","unchecked"})
+    Node<K,V>[] newTab = (Node<K,V>[])new Node[newCap];
+    table = newTab;
+    if (oldTab != null) {
+        for (int j = 0; j < oldCap; ++j) {
+            Node<K,V> e;
+            if ((e = oldTab[j]) != null) {
+                oldTab[j] = null;
+                if (e.next == null)
+                    newTab[e.hash & (newCap - 1)] = e;
+                else if (e instanceof TreeNode)
+                    ((TreeNode<K,V>)e).split(this, newTab, j, oldCap);
+                else { // preserve order
+                    Node<K,V> loHead = null, loTail = null;
+                    Node<K,V> hiHead = null, hiTail = null;
+                    Node<K,V> next;
+                    do {
+                        next = e.next;
+                        if ((e.hash & oldCap) == 0) {
+                            if (loTail == null)
+                                loHead = e;
+                            else
+                                loTail.next = e;
+                            loTail = e;
+                        }
+                        else {
+                            if (hiTail == null)
+                                hiHead = e;
+                            else
+                                hiTail.next = e;
+                            hiTail = e;
+                        }
+                    } while ((e = next) != null);
+                    if (loTail != null) {
+                        loTail.next = null;
+                        newTab[j] = loHead;
+                    }
+                    if (hiTail != null) {
+                        hiTail.next = null;
+                        newTab[j + oldCap] = hiHead;
+                    }
+                }
+            }
+        }
+    }
+    return newTab;
+}
+```
+把table数组赋值给oldTab变量，判断oldTab是否等于null,此处我们假设不为空，即原始数组已经装不下需要扩容的情况，此时oldCap等于数组的长度，oldThr等于原来的threshold，定义newCap, newThr等于0,
+如果oldCap大于0并且大于等于MAXIMUM_CAPACITY(2的30次方),threshold等于Integer的最大值,返回oldTab表示不能再进行扩容。
+
+否则把oldCap向左移动1，得到新的newCap容量是32，然后得到新的扩容阈值newThr=24，把newThr赋值给成员变量threshold,新创建一个数组newTab,容量是32，成员变量table
+指向newTab。
+
+接下来循环遍历老的数组，重新计算它们的索引下标，把它们重新放到新数组的相应位置，这里分几种情况，一是遍历元素没有冲突，即没有链表和红黑树的情况下;二是红黑树的情况下;三是链表的情况下，下面我只分析没有冲突和有冲突是链表结构的情况，红黑树的情况暂且不分析。
+- 没有冲突的resize逻辑
+
+&nbsp;&nbsp;循环遍历把对应下标的元素赋值给临时变量Node e,并把当前的对应下标元素指向null,用原来元素的hash值和新数组容量(32)减去1进行&操作重新计算下标值用于存放原来的元素。
+
+- 链表的resize逻辑
+
+&nbsp;&nbsp;这块的逻辑主要是处理链表桶（非红黑树）的情况,它的主要逻辑是对旧桶中的链表进行重新分配，将节点拆分到新的newTab数组中不同的桶位置。
+loHead / loTail：低位链表的头尾指针,hiHead / hiTail：高位链表的头尾指针,这段代码的目的就是将旧链表拆分成两个部分：一个是低位链表(index = j)：e.hash & oldCap == 0;
+一个是高位链表(index = j + oldCap)：e.hash & oldCap != 0,下面一步步进行分析。
+
+&nbsp;&nbsp;如果e.hash & oldCap) == 0说明是低位，判断loTail是否等于null,假如第一次执行时候指定是null,loHead=e,loTail=e,第二次执行时候loTail不是null,则loTail.next=e,loTail指向当前e,这里举个例子说明
+假设 oldCap = 16,newCap = 32,并且 table[3] 这个桶中有以下链表：3 -> 19 -> 35 -> 7,假设它们的 hash 分别为：
+hash(3)  = 0011  -> (hash & oldCap) == 0  -> 低位;hash(19) = 10011 -> (hash & oldCap) != 0 -> 高位; hash(35) = 100011 -> (hash & oldCap) != 0 -> 高位;hash(7)  = 0111  -> (hash & oldCap) == 0  -> 低位,那么执行上面低位逻辑以后
+loHead 低位链表 = 3 -> 7,loTail=7,do while执行以后判断loTail不等于null, loTail.next = null,断开原链表，避免循环, newTab[j] = loHead,然后放入新的数组桶中。
+
+&nbsp;&nbsp;同理高位的处理逻辑类似，只不过放入新数组下标位置是当前遍历的下标加上oldCap，目的是放入新数组的高位，这样做能有效降低hash冲突的概率。
+
+
 ## 5. HashMap的线程安全问题
 
 `HashMap` **在多线程环境下** 存在以下问题：
