@@ -127,6 +127,7 @@ static final class Entry<K,V> implements Map.Entry<K,V>{
 3.将P设置为当前节点，进行后续处理
 
 此时操作如下图：
+
 ![img14.png](..%2Fimg%2Fimg14.png)
 
 **场景3.2：叔叔为黑色，父亲为红色，并且插在父亲的左节点**
@@ -160,3 +161,53 @@ static final class Entry<K,V> implements Map.Entry<K,V>{
 ![img17.png](..%2Fimg%2Fimg17.png)
 
 **场景3.2.2 LR型失衡**
+
+细分场景2:新插入节点，为其父节点的右子节点(LR红色情况),插入后就是LR型失衡,如图所示:
+
+![img18.png](..%2Fimg%2Fimg18.png)
+
+**自平衡处理：**
+
+1.对F进行左旋
+
+2.将F设置为当前节点，得到LL红色情况
+
+3.按照LL红色情况处理(1.变色 2.右旋P节点)
+
+![img19.png](..%2Fimg%2Fimg19.png)
+
+**场景3.3：叔叔为黑节点，父亲为红色，并且父亲节点是祖父节点的右子节点**
+
+![img20.png](..%2Fimg%2Fimg20.png)
+
+**场景3.3.1：RR型失衡**
+
+&nbsp;&nbsp;新插入节点，为其父节点的右子节点(RR红色情况)
+
+![img22.png](..%2Fimg%2Fimg22.png)
+
+**自平衡处理：**
+
+1.变色：
+
+将F设置为黑色，将P设置为红色
+
+2.对P节点进行左旋
+
+![img23.png](..%2Fimg%2Fimg23.png)
+
+**场景3.3.2：RL型失衡**
+
+&nbsp;&nbsp;新插入节点，为其父节点的左子节点(RL红色情况)
+
+![img24.png](..%2Fimg%2Fimg24.png)
+
+**自平衡处理：**
+
+1.对F进行右旋
+
+2.将F设置为当前节点，得到RR红色情况
+
+3.按照RR红色情况处理(1.变色 2.左旋 P节点)
+
+![img25.png](..%2Fimg%2Fimg25.png)
