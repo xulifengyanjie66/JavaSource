@@ -211,3 +211,134 @@ static final class Entry<K,V> implements Map.Entry<K,V>{
 3.按照RR红色情况处理(1.变色 2.左旋 P节点)
 
 ![img25.png](..%2Fimg%2Fimg25.png)
+
+## 5. TreeMap源码分析
+
+### 5.1 插入(put方法)
+
+&nbsp;&nbsp;该方法的签名如下：
+
+```java
+private V put(K key, V value, boolean replaceOld) {
+        Entry<K,V> t = root;
+        if (t == null) {
+            addEntryToEmptyMap(key, value);
+            return null;
+        }
+        int cmp;
+        Entry<K,V> parent;
+
+        Comparator<? super K> cpr = comparator;
+        if (cpr != null) {
+            do {
+                parent = t;
+                cmp = cpr.compare(key, t.key);
+                if (cmp < 0)
+                    t = t.left;
+                else if (cmp > 0)
+                    t = t.right;
+                else {
+                    V oldValue = t.value;
+                    if (replaceOld || oldValue == null) {
+                        t.value = value;
+                    }
+                    return oldValue;
+                }
+            } while (t != null);
+        } else {
+            Objects.requireNonNull(key);
+            Comparable<? super K> k = (Comparable<? super K>) key;
+            do {
+                parent = t;
+                cmp = k.compareTo(t.key);
+                if (cmp < 0)
+                    t = t.left;
+                else if (cmp > 0)
+                    t = t.right;
+                else {
+                    V oldValue = t.value;
+                    if (replaceOld || oldValue == null) {
+                        t.value = value;
+                    }
+                    return oldValue;
+                }
+            } while (t != null);
+        }
+        addEntry(key, value, parent, cmp < 0);
+        return null;
+}
+```
+首先分析第一次添加的时候,比如添加的是元素3,把root成员属性赋值给变量t,第一次t是null,调用addEntryToEmptyMap方法，该方法的签名如下:
+```java
+private void addEntryToEmptyMap(K key, V value) {
+        compare(key, key); 
+        root = new Entry<>(key, value, null);
+        size = 1;
+        modCount++;
+}
+```
+主要是创建一个Entry类型的root对象,设置size等于1,modCount加1，最终返回null,首次添加的逻辑很简单。
+
+接着分析第二次添加的时候，比如添加的是元素2,定义int类型变量cmp,Entry类型的parent,把成员变量类型是Comparator的comparator赋值给cpr,
+判断它是否为null,这块的comparator可以由调用端自行传入，假如没传递这个，会走到else语句中,把key强制转换为Comparable类型，从这块可以看出，如果是
+自定义类型的key，需要实现Comparable接口，否则会报ClassCastException异常，相信这里大家都理解,这时候有do while循环,把元素t也是root赋值给变量parent, 用当前插入元素和根元素比较，
+如果小于根元素说明是根元素的左子树，把根元素的左子树赋值给变量t,判断t是否为空，如果不为空继续判断直到null为止，经过这一系列do while循环比较就能找出
+新传入的元素父亲节点parent,如果比较以后相等说明就是要覆盖之前的老值，然后返回老值。
+
+找到要插入元素的父亲节点以后，调用addEntry方法，该方法的签名如下；
+```java
+  private void addEntry(K key, V value, Entry<K, V> parent, boolean addToLeft) {
+      Entry<K,V> e = new Entry<>(key, value, parent);
+      if (addToLeft)
+          parent.left = e;
+      else
+          parent.right = e;
+      fixAfterInsertion(e);
+      size++;
+      modCount++;
+  }
+```
+创建Entry对象，传入key、value、父亲节点，如果要插入到左子树把当前插入的元素赋值给parent.left,如果是右子树把当前插入的元素赋值给parent.right，插入以后需要进行自平衡操作，调用方法
+fixAfterInsertion,该方法的签名如下:
+```java
+private void fixAfterInsertion(Entry<K,V> x) {
+        x.color = RED;
+
+        while (x != null && x != root && x.parent.color == RED) {
+            if (parentOf(x) == leftOf(parentOf(parentOf(x)))) {
+                Entry<K,V> y = rightOf(parentOf(parentOf(x)));
+                if (colorOf(y) == RED) {
+                    setColor(parentOf(x), BLACK);
+                    setColor(y, BLACK);
+                    setColor(parentOf(parentOf(x)), RED);
+                    x = parentOf(parentOf(x));
+                } else {
+                    if (x == rightOf(parentOf(x))) {
+                        x = parentOf(x);
+                        rotateLeft(x);
+                    }
+                    setColor(parentOf(x), BLACK);
+                    setColor(parentOf(parentOf(x)), RED);
+                    rotateRight(parentOf(parentOf(x)));
+                }
+            } else {
+                Entry<K,V> y = leftOf(parentOf(parentOf(x)));
+                if (colorOf(y) == RED) {
+                    setColor(parentOf(x), BLACK);
+                    setColor(y, BLACK);
+                    setColor(parentOf(parentOf(x)), RED);
+                    x = parentOf(parentOf(x));
+                } else {
+                    if (x == leftOf(parentOf(x))) {
+                        x = parentOf(x);
+                        rotateRight(x);
+                    }
+                    setColor(parentOf(x), BLACK);
+                    setColor(parentOf(parentOf(x)), RED);
+                    rotateLeft(parentOf(parentOf(x)));
+                }
+            }
+        }
+        root.color = BLACK;
+}
+```
