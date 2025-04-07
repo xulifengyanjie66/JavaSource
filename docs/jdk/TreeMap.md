@@ -342,3 +342,89 @@ private void fixAfterInsertion(Entry<K,V> x) {
         root.color = BLACK;
 }
 ```
+判断要插入的元素是不是根节点，如果是根节点更新颜色为黑色，否则是红色，这里我们重点关注是红色的逻辑,先是一个while的死循环,结束条件是插入的元素
+不为空并且不是root节点并且是插入元素父节点是红色。在while循环有两个大的分支判断。
+
+- x的父节点是其祖父节点的左子节点:  
+  &nbsp;&nbsp;&nbsp;&nbsp;获取变量y,y是祖父节点的右子节点，即是x的叔叔节点,这里又分两种情况:
+
+  - 如果叔叔也是红色节点，根据第四章节分析的场景3.1父亲和叔叔为红色节点情况可知：  
+  &nbsp;&nbsp;&nbsp;&nbsp;将叔叔节点和父节点设置为黑色节点，设置祖父节点为红色，祖父节点设置为当前节点，进行后续处理继续进行修复。  
+  - 如果叔叔节点y是黑色的,进入下一个修复步骤：
+
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;如果x是父节点的右子节点，就是第四章节分析的场景3.2.2LR型失衡,首先得到节点x的父节点并重新赋值给x,将父节点x
+  &nbsp;&nbsp;&nbsp;&nbsp;进行左旋操作,调用的方法是rotateLeft,该方法的签名如下:
+```java
+ private void rotateLeft(Entry<K,V> p) {
+      if (p != null) {
+          Entry<K,V> r = p.right;
+          p.right = r.left;
+          if (r.left != null)
+              r.left.parent = p;
+          r.parent = p.parent;
+          if (p.parent == null)
+              root = r;
+          else if (p.parent.left == p)
+              p.parent.left = r;
+          else
+              p.parent.right = r;
+          r.left = p;
+          p.parent = r;
+      }
+  }
+```
+那我按照场景3.2.2图场景分析,获取p.right的代表变量r等于节点K,将K的左子树挂到p的右子树上，因为p要下沉成为K的左子树，设置K的左子树的父节点是F,
+K的父指针指向F的原父节点,这样有助于K成为F的父节点，判断p.parent如果等于null,说明p是根节点，那么k成为新的根节点,否则更新F父节点的左子树为K
+或者更新F父节点的右子树为K,最后将K的左子树变为F,F的父子树变为K,通过rotateLeft方法就把原先的父节点变为当前节点的子节点，但是还没有完事，因为此时相邻
+节点还都是红色的,需要将节点P变红,K变黑，然后进行右旋平衡操作，调用的方法的是rotateRight,该方法的签名是:
+```java
+ private void rotateRight(Entry<K,V> p) {
+        if (p != null) {
+            Entry<K,V> l = p.left;
+            p.left = l.right;
+            if (l.right != null) l.right.parent = p;
+            l.parent = p.parent;
+            if (p.parent == null)
+                root = l;
+            else if (p.parent.right == p)
+                p.parent.right = l;
+            else p.parent.left = l;
+            l.right = p;
+            p.parent = l;
+        }
+}
+```
+此时传入的节点是P,把P的左子树赋值给变量l,把l的右子树赋值给P的左子树，判断如果l的右子树不为空，把l的右子树的parent设置为P,设置元素k的parent指向
+P的parent,判断p.parent如果等于null,说明P是根节点，那么K成为新的根节点，否则更新P父节点的左子树为K或者右子树，最后将P变成K的右子树，P的父节点变成K。
+- x的父节点是其祖父节点的右子节点:
+
+&nbsp;&nbsp;这块的逻辑其实是跟上面的逻辑是对称操作，是上面的相反方向的操作，这里我就不分析了，感兴趣的同学可以自行分析一下。
+
+### 5.2 查找(get方法)
+&nbsp;&nbsp;该方法的签名如下:
+```java
+public V get(Object key) {
+        Entry<K,V> p = getEntry(key);
+        return (p==null ? null : p.value);
+}
+
+final Entry<K,V> getEntry(Object key) {
+        if (comparator != null)
+           return getEntryUsingComparator(key);
+        Objects.requireNonNull(key);
+        Comparable<? super K> k = (Comparable<? super K>) key;
+        Entry<K,V> p = root;
+        while (p != null) {
+          int cmp = k.compareTo(p.key);
+          if (cmp < 0)
+            p = p.left;
+          else if (cmp > 0)
+            p = p.right;
+          else
+           return p;
+        }
+        return null;
+}
+```
+get方法逻辑比较简单,首先获取根元素赋值给变量p,然后根据传入的元素调用compareTo方法进行比较，根据结果和0比较，如果小于就把p的左子树赋值给p,如果大于就把
+p的右子树赋值给p,如果等于直接返回元素p。
