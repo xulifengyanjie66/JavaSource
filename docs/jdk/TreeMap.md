@@ -5,17 +5,15 @@
 - [2. 继承关系分析](#2-继承关系分析)
 - [3. TreeMap的数据结构](#3-treemap的数据结构)
    - [3.1 TreeMap的核心成员变量](#31-treemap的核心成员变量)
-- [4. LinkedHashMap 的数据结构](#4-linkedhashmap-的数据结构)
-- [5. LinkedHashMap 的访问顺序与插入顺序](#5-linkedhashmap-的访问顺序与插入顺序)
-- [6. LRU 缓存的实现原理](#6-lru-缓存的实现原理)
-    - [6.1 removeEldestEntry 方法](#6-lru-缓存的实现原理)
-- [7. 源码解析](#7-源码解析)
-    - [7.1 newNode 方法](#71-newnode方法)
-    - [7.2 afterNodeAccess 方法](#72-afternodeaccess方法)
-    - [7.3 afterNodeInsertion 方法](#73-afternodeinsertion方法lru缓存应用)
-    - [7.4 get 方法](#74-get方法)
-    - [7.5 forEach 方法](#75-foreach方法)
-- [8. 总结](#8-总结)
+- [4. 红黑树的基本概念的数据结构](#4-红黑树的基本概念)
+   - [4.1 红黑树的操作](#41-红黑树的操作)
+   - [4.1 红黑树的操作](#42-红黑树插入场景旋转分析)
+- [5. TreeMap源码分析](#5-treemap源码分析)
+   - [5.1 插入put方法](#51-插入put方法)
+   - [5.2 查找get方法](#52-查找get方法)
+   - [5.3 foreach方法](#53-foreach方法)
+   - [5.4 remove方法](#54-remove方法)
+- [6. 总结](#6-总结)
 
 ---
 
@@ -428,3 +426,202 @@ final Entry<K,V> getEntry(Object key) {
 ```
 get方法逻辑比较简单,首先获取根元素赋值给变量p,然后根据传入的元素调用compareTo方法进行比较，根据结果和0比较，如果小于就把p的左子树赋值给p,如果大于就把
 p的右子树赋值给p,如果等于直接返回元素p。
+
+### 5.3 forEach方法
+
+&nbsp;&nbsp;该方法的签名如下:
+```java
+ public void forEach(BiConsumer<? super K, ? super V> action) {
+        Objects.requireNonNull(action);
+        int expectedModCount = modCount;
+        for (Entry<K, V> e = getFirstEntry(); e != null; e = successor(e)) {
+            action.accept(e.key, e.value);
+
+            if (expectedModCount != modCount) {
+                throw new ConcurrentModificationException();
+            }
+        }
+}
+```
+此次是一个for循环,可以看出先调用了getFirstEntry方法获取节点元素，那么再来看看这个方法的签名:
+```java
+final Entry<K,V> getFirstEntry() {
+    Entry<K,V> p = root;
+    if (p != null)
+        while (p.left != null)
+            p = p.left;
+    return p;
+}
+```
+把根节点赋值给变量p,接着while一个死循环,判断如果p的左子树不为空,就把左子树赋值给p,再次循环判断直到p的左子树为空然后返回p,这里为什么要这么
+做那，因为TreeMap是按照key值有序排列的，它的底层是一个红黑树，左子树的值比根节点值小，根节点值又小于右子树节点，这样一直循环获取的就是最小的左子树值，最小值
+可以先取出来。
+
+接着返回到forEach的for循环,调用getFirstEntry如果返回的不为空，就打印key,value值。
+
+接着调用了successor方法传入getFirstEntry方法返回的节点e,该方法主要获取节点e的后继节点,该方法的签名如下:
+```java
+static <K,V> TreeMap.Entry<K,V> successor(Entry<K,V> t) {
+      if (t == null)
+          return null;
+      else if (t.right != null) {
+          Entry<K,V> p = t.right;
+          while (p.left != null)
+              p = p.left;
+          return p;
+      } else {
+          Entry<K,V> p = t.parent;
+          Entry<K,V> ch = t;
+          while (p != null && ch == p.right) {
+              ch = p;
+              p = p.parent;
+          }
+          return p;
+      }
+}
+```
+判断当前节点是否有右子树，如果有就一直while循环获取右子树中最左边节点，也就是右子树中最小的那个节点,这种是树的中序遍历形式，访问顺序是：左子树 -> 当前节点 -> 右子树。
+
+如果当前节点没有右子树，需要向上查找后继节点。此时的后继节点是第一个使当前节点位于其左子树中的祖先节点，为什么要这么查找那？因为在中序遍历中当前节点是左子节点，那么父节点就是它的后继（因为父节点还没被访问）。
+
+### 5.4 remove方法
+&nbsp;&nbsp;该方法的签名如下:
+```java
+ public V remove(Object key) {
+        Entry<K,V> p = getEntry(key);
+        if (p == null)
+            return null;
+
+        V oldValue = p.value;
+        deleteEntry(p);
+        return oldValue;
+}
+```
+首先调用getEntry方法获取要删除的节点元素，如果获取不到返回null,如果获取到了先保留Entry的value值，然后调用deleteEntry方法，该方法签名如下:
+```java
+private void deleteEntry(Entry<K,V> p) {
+    modCount++;
+    size--;
+    if (p.left != null && p.right != null) {
+        Entry<K,V> s = successor(p);
+        p.key = s.key;
+        p.value = s.value;
+        p = s;
+    }
+    Entry<K,V> replacement = (p.left != null ? p.left : p.right);
+    
+    if (replacement != null) {
+        replacement.parent = p.parent;
+        if (p.parent == null)
+            root = replacement;
+        else if (p == p.parent.left)
+            p.parent.left  = replacement;
+        else
+            p.parent.right = replacement;
+        
+        p.left = p.right = p.parent = null;
+        
+        if (p.color == BLACK)
+            fixAfterDeletion(replacement);
+    } else if (p.parent == null) {
+        root = null;
+    } else {
+        if (p.color == BLACK)
+            fixAfterDeletion(p);
+
+        if (p.parent != null) {
+            if (p == p.parent.left)
+                p.parent.left = null;
+            else if (p == p.parent.right)
+                p.parent.right = null;
+            p.parent = null;
+        }
+    }
+}
+```
+判断要删除(p)的节点是否同时存在左右节点,如果是找出后继节点，这个后继方法我已经在forEach方法中已经分析过了，把p的key、value替换为后继节点的key、value,最后把p指向后继节点。
+
+下面的操作就是要删除找到的后继节点，在删除之前要判断它是否有左子树或者右子树:
+- 如果有
+
+&nbsp;&nbsp;把replacement的父节点设置为p=s的父节点，如果p=s的父节点为null,说明p=s是父亲节点，那么
+删除了后继节点，自然root节点变为replacement,否则就进行判断是把replacement放在p=s的左边还是右边，然后p.left = p.right = p.parent = null把指向都为null,方便删除p=s的元素
+这个操作完成以后就删除了后继节点，而后继节点的key,value被删除的后继节点的key,value覆盖了，看的像是要删除remove中的元素，其实是覆盖，真实删除的是后继节点。
+
+接着判断删除的元素是否是黑色的，如果是黑色的，需要进行树的平衡操作，这是为啥那，因为根据红黑树的特性，从任意节点到其所有叶子节点的路径上，黑色节点的数量相同（称为“黑高”平衡）,所以删除元素
+以后需要平衡操作,下面看一下fixAfterDeletion方法签名:
+```java
+private void fixAfterDeletion(Entry<K,V> x) {
+        while (x != root && colorOf(x) == BLACK) {
+            if (x == leftOf(parentOf(x))) {
+                Entry<K,V> sib = rightOf(parentOf(x));
+
+                if (colorOf(sib) == RED) {
+                    setColor(sib, BLACK);
+                    setColor(parentOf(x), RED);
+                    rotateLeft(parentOf(x));
+                    sib = rightOf(parentOf(x));
+                }
+
+                if (colorOf(leftOf(sib))  == BLACK &&
+                    colorOf(rightOf(sib)) == BLACK) {
+                    setColor(sib, RED);
+                    x = parentOf(x);
+                } else {
+                    if (colorOf(rightOf(sib)) == BLACK) {
+                        setColor(leftOf(sib), BLACK);
+                        setColor(sib, RED);
+                        rotateRight(sib);
+                        sib = rightOf(parentOf(x));
+                    }
+                    setColor(sib, colorOf(parentOf(x)));
+                    setColor(parentOf(x), BLACK);
+                    setColor(rightOf(sib), BLACK);
+                    rotateLeft(parentOf(x));
+                    x = root;
+                }
+            } else { 
+                Entry<K,V> sib = leftOf(parentOf(x));
+
+                if (colorOf(sib) == RED) {
+                    setColor(sib, BLACK);
+                    setColor(parentOf(x), RED);
+                    rotateRight(parentOf(x));
+                    sib = leftOf(parentOf(x));
+                }
+
+                if (colorOf(rightOf(sib)) == BLACK &&
+                    colorOf(leftOf(sib)) == BLACK) {
+                    setColor(sib, RED);
+                    x = parentOf(x);
+                } else {
+                    if (colorOf(leftOf(sib)) == BLACK) {
+                        setColor(rightOf(sib), BLACK);
+                        setColor(sib, RED);
+                        rotateLeft(sib);
+                        sib = leftOf(parentOf(x));
+                    }
+                    setColor(sib, colorOf(parentOf(x)));
+                    setColor(parentOf(x), BLACK);
+                    setColor(leftOf(sib), BLACK);
+                    rotateRight(parentOf(x));
+                    x = root;
+                }
+            }
+        }
+
+        setColor(x, BLACK);
+}
+```
+这块变色和旋转逻辑和新增时候差不多就不再赘述了。
+
+- 如果没有如且它的parent为null
+
+&nbsp;&nbsp;把root设置为null,说明树里面一个元素都没有了。
+
+- 如果不是上面的任意情况
+
+&nbsp;&nbsp;就删除这个后继元素
+
+## 6 总结
+&nbsp;&nbsp;TreeMap通过红黑树保证数据的有序性，同时提供 O(log n) 级别的查找、插入和删除操作。掌握红黑树的旋转（左旋、右旋）及平衡调整机制，可以更好地理解TreeMap的内部实现！
