@@ -9,11 +9,8 @@
 - [四、源码分析](#四源码分析)
   - [4.1 put源码操作源码](#41-put操作核心源码分析)
   - [4.2 get源码操作源码](#42-get操作核心源码分析)
-- [六、get 操作源码分析](#六get-操作源码分析)
-- [七、扩容机制](#七扩容机制)
-- [八、与 HashMap 的区别](#八与-hashmap-的区别)
-- [九、常见问题与面试点](#九常见问题与面试点)
-- [十、总结](#十总结)
+  - [4.3 transfer扩容核心源码分析](#43-transfer扩容核心源码分析)
+- [五、总结](#五总结)
 
 ---
 ## 一、 引言
@@ -220,9 +217,31 @@ private final Node<K,V>[] initTable() {
 
 如果else if ((f = tabAt(tab, i = (n - 1) & hash)) == null)条件不成立会走到else if ((fh = f.hash) == MOVED)这个逻辑判断
 
-&nbsp;&nbsp;这块主要看其他线程是否正在扩容，如果是就协助扩容操作。
+&nbsp;&nbsp;这块主要看其他线程是否正在扩容，判断的依据是hash值是否等于-1,因为在扩容时候会把这个设置为-1，后面扩容的时候有说到，如果是就协助扩容,调用helpTransfer方法，该方法的签名如下:
+```java
+final Node<K,V>[] helpTransfer(Node<K,V>[] tab, Node<K,V> f) {
+        Node<K,V>[] nextTab; int sc;
+        if (tab != null && (f instanceof ForwardingNode) &&
+            (nextTab = ((ForwardingNode<K,V>)f).nextTable) != null) {
+            int rs = resizeStamp(tab.length) << RESIZE_STAMP_SHIFT;
+            while (nextTab == nextTable && table == tab &&
+                   (sc = sizeCtl) < 0) {
+                if (sc == rs + MAX_RESIZERS || sc == rs + 1 ||
+                    transferIndex <= 0)
+                    break;
+                if (U.compareAndSetInt(this, SIZECTL, sc, sc + 1)) {
+                    transfer(tab, nextTab);
+                    break;
+                }
+            }
+            return nextTab;
+        }
+        return table;
+}
+```
+这里其实就是调用扩容方法，该处逻辑我将在扩容处详细分析。
 
-如果走到else语句中说明当前桶不为空，且不在扩容状态已经发生了hash冲突的情况
+如果走到else语句中说明当前桶不为空，且不在扩容状态已经发生了hash冲突的情况:
 
 &nbsp;&nbsp;对桶的头结点f(细粒度锁，只锁当前桶，其他桶仍可并发访问）,保证同一时间只有一个线程能修改该桶内的数据，执行检查if (tabAt(tab, i) == f),这段代码主要是用来
 检查防止加锁前桶的头节点已被其他线程修改（例如扩容或树化）,比较当前桶的头节点是否仍是之前读取的f，如果不是则放弃操作(外层循环会重试),如果fn大于等于0，说明是链表结构，这是因为
@@ -472,6 +491,37 @@ final long sumCount() {
 ```
 把baseCount赋值给sum,循环CounterCell数组，累加sum值，最终返回sum,可以看出这段代码在高并发情况下会有计算问题，是线程不安全的，它只是一个估算值并不是准确值。
 
+在fullAddCount方法和sumCount方法都执行完成以后还有个分支逻辑if (check >= 0),添加操作会进入到这个if判断条件中，下面一步步分析这里面的流程。
+
+首先有个外层循环while(s >= (long)(sc = sizeCtl) && (tab = table) != null &&(n = tab.length) < MAXIMUM_CAPACITY)
+
+- s >= sizeCtl：当前元素数量（s = sumCount()）达到或超过扩容阈值(sizeCtl),需要扩容。
+
+- tab = table != null：哈希表已初始化。
+
+- n = tab.length < MAXIMUM_CAPACITY：当前表长度未达到最大容量限制。
+
+计算扩容标记 rs = resizeStamp(n) << RESIZE_STAMP_SHIFT,这个过程是移位运算
+
+- resizeStamp(n)：生成一个基于当前表长度n的扩容标记（唯一标识当前扩容批次）。
+
+- << RESIZE_STAMP_SHIFT：左移后高位存储扩容标记，低位预留线程计数。
+
+接着判断当前扩容状态 if(sc < 0),如果条件成立表示已有其他线程正在扩容(sizeCtl为负数时高16位存储扩容标记，低16位存储扩容线程数+1),这种情况有两个分支逻辑
+- 协助扩容
+   - 退出条件（满足任意一条则当前线程不协助扩容）：
+     - sc == rs + MAX_RESIZERS：扩容线程数已达最大值。
+     - sc == rs + 1
+     - nextTable == null：扩容目标表未初始化。
+     - transferIndex <= 0：所有扩容任务已被分配完。
+   - 协助扩容：通过CAS将sizeCtl加1（增加线程数），并调用transfer()协助数据迁移。
+   - 
+如果sc >0,表示当前无扩容进行,当前线程作为首个扩容线程,CAS操作：将sizeCtl更新为rs+2(高16位存储扩容标记，低16位表示线程数+2）,调用transfer(tab, null)，初始化扩容并迁移数据。
+
+更新元素计数 s = sumCount(),每次循环结束后重新计算元素数量，检查是否仍需继续扩容（例如在扩容过程中又有新元素插入）。
+
+以上操作就是所有的put操作的核心源码介绍。
+
 ### 4.2 get操作核心源码分析
 &nbsp;&nbsp;该方法的签名如下:
 ```java
@@ -498,6 +548,250 @@ public V get(Object key) {
 定义一些临时变量，获取要查找key的hashCode值，判断如果table不为空并且调用tabAt方法获取元素不为空，把获取到元素赋值给变量Node e,比较e.hash是否等于计算出的hash
 如果相等并且equals值也相等直接返回e的val值。
 
-如果不相等说明是hash冲突了，判断如果eh的hash值小于0，说明可能是红黑树的TreeBin结构,调用调用其find方法进线查找。
+如果不相等说明是hash冲突了，判断如果eh的hash值小于0,这是一个特殊的情况，因为正常情况hash都大于0,如果小于可能是以下情况：
+
+- TreeBin：红黑树的根节点(哈希桶已树化)。
+
+- ForwardingNode：扩容时使用的转发节点(表示数据正在迁移)。
+
+- ReservationNode：保留节点(用于占位或原子操作)。
+
+这里我主要分析一下是ForwardingNode情况，ForwardingNode的find方法源码如下:
+```java
+Node<K,V> find(int h, Object k) {
+           
+outer: for (Node<K,V>[] tab = nextTable;;) {
+    Node<K,V> e; int n;
+    if (k == null || tab == null || (n = tab.length) == 0 ||
+        (e = tabAt(tab, (n - 1) & h)) == null)
+        return null;
+    for (;;) {
+        int eh; K ek;
+        if ((eh = e.hash) == h &&
+            ((ek = e.key) == k || (ek != null && k.equals(ek))))
+            return e;
+        if (eh < 0) {
+            if (e instanceof ForwardingNode) {
+                tab = ((ForwardingNode<K,V>)e).nextTable;
+                continue outer;
+            }
+            else
+                return e.find(h, k);
+        }
+        if ((e = e.next) == null)
+            return null;
+    }
+ }
+}
+```
+这里面流程我就做个总结，不一步步说了，相信大家都能看懂，主要是跳转到新哈希表(扩容后的nextTable),在新表中重新计算桶位置（newIndex = (n - 1) & h)，继续查找键 key,这样做的好处是读操作无需阻塞，即使扩容仍在进行中。
+这里举个场景例子：
+
+假设哈希表正在从大小 16 扩容到 32：
+
+1.线程A 调用 get(key)，定位到桶 index=5，发现头节点是 ForwardingNode。
+
+2.通过ForwardingNode.find() 跳转到新表（大小 32），重新计算 newIndex = 5 或 21（取决于哈希值的高位）。
+
+3.在新表的对应桶中查找 key，返回结果。
 
 如果以上都不是那么就是链表,一个while的死循环,循环结束条件是e=e.next == null,如果通过链表的next一直能找到相等的hash并且equals相等就返回当前链表的val值,否则就返回null。
+
+### 4.3 transfer扩容核心源码分析
+&nbsp;&nbsp;transfer()方法是ConcurrentHashMap扩容的核心方法，负责将旧数组中的节点迁移到新数组,该方法的签名如下:
+```java
+private final void transfer(Node<K,V>[] tab, Node<K,V>[] nextTab) {
+        int n = tab.length, stride;
+        if ((stride = (NCPU > 1) ? (n >>> 3) / NCPU : n) < MIN_TRANSFER_STRIDE)
+            stride = MIN_TRANSFER_STRIDE; // subdivide range
+        if (nextTab == null) {            // initiating
+            try {
+                @SuppressWarnings("unchecked")
+                Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n << 1];
+                nextTab = nt;
+            } catch (Throwable ex) {      // try to cope with OOME
+                sizeCtl = Integer.MAX_VALUE;
+                return;
+            }
+            nextTable = nextTab;
+            transferIndex = n;
+        }
+        int nextn = nextTab.length;
+        ForwardingNode<K,V> fwd = new ForwardingNode<K,V>(nextTab);
+        boolean advance = true;
+        boolean finishing = false; // to ensure sweep before committing nextTab
+        for (int i = 0, bound = 0;;) {
+            Node<K,V> f; int fh;
+            while (advance) {
+                int nextIndex, nextBound;
+                if (--i >= bound || finishing)
+                    advance = false;
+                else if ((nextIndex = transferIndex) <= 0) {
+                    i = -1;
+                    advance = false;
+                }
+                else if (U.compareAndSetInt
+                         (this, TRANSFERINDEX, nextIndex,
+                          nextBound = (nextIndex > stride ?
+                                       nextIndex - stride : 0))) {
+                    bound = nextBound;
+                    i = nextIndex - 1;
+                    advance = false;
+                }
+            }
+            if (i < 0 || i >= n || i + n >= nextn) {
+                int sc;
+                if (finishing) {
+                    nextTable = null;
+                    table = nextTab;
+                    sizeCtl = (n << 1) - (n >>> 1);
+                    return;
+                }
+                if (U.compareAndSetInt(this, SIZECTL, sc = sizeCtl, sc - 1)) {
+                    if ((sc - 2) != resizeStamp(n) << RESIZE_STAMP_SHIFT)
+                        return;
+                    finishing = advance = true;
+                    i = n; // recheck before commit
+                }
+            }
+            else if ((f = tabAt(tab, i)) == null)
+                advance = casTabAt(tab, i, null, fwd);
+            else if ((fh = f.hash) == MOVED)
+                advance = true; // already processed
+            else {
+                synchronized (f) {
+                    if (tabAt(tab, i) == f) {
+                        Node<K,V> ln, hn;
+                        if (fh >= 0) {
+                            int runBit = fh & n;
+                            Node<K,V> lastRun = f;
+                            for (Node<K,V> p = f.next; p != null; p = p.next) {
+                                int b = p.hash & n;
+                                if (b != runBit) {
+                                    runBit = b;
+                                    lastRun = p;
+                                }
+                            }
+                            if (runBit == 0) {
+                                ln = lastRun;
+                                hn = null;
+                            }
+                            else {
+                                hn = lastRun;
+                                ln = null;
+                            }
+                            for (Node<K,V> p = f; p != lastRun; p = p.next) {
+                                int ph = p.hash; K pk = p.key; V pv = p.val;
+                                if ((ph & n) == 0)
+                                    ln = new Node<K,V>(ph, pk, pv, ln);
+                                else
+                                    hn = new Node<K,V>(ph, pk, pv, hn);
+                            }
+                            setTabAt(nextTab, i, ln);
+                            setTabAt(nextTab, i + n, hn);
+                            setTabAt(tab, i, fwd);
+                            advance = true;
+                        }
+                        else if (f instanceof TreeBin) {
+                            TreeBin<K,V> t = (TreeBin<K,V>)f;
+                            TreeNode<K,V> lo = null, loTail = null;
+                            TreeNode<K,V> hi = null, hiTail = null;
+                            int lc = 0, hc = 0;
+                            for (Node<K,V> e = t.first; e != null; e = e.next) {
+                                int h = e.hash;
+                                TreeNode<K,V> p = new TreeNode<K,V>
+                                    (h, e.key, e.val, null, null);
+                                if ((h & n) == 0) {
+                                    if ((p.prev = loTail) == null)
+                                        lo = p;
+                                    else
+                                        loTail.next = p;
+                                    loTail = p;
+                                    ++lc;
+                                }
+                                else {
+                                    if ((p.prev = hiTail) == null)
+                                        hi = p;
+                                    else
+                                        hiTail.next = p;
+                                    hiTail = p;
+                                    ++hc;
+                                }
+                            }
+                            ln = (lc <= UNTREEIFY_THRESHOLD) ? untreeify(lo) :
+                                (hc != 0) ? new TreeBin<K,V>(lo) : t;
+                            hn = (hc <= UNTREEIFY_THRESHOLD) ? untreeify(hi) :
+                                (lc != 0) ? new TreeBin<K,V>(hi) : t;
+                            setTabAt(nextTab, i, ln);
+                            setTabAt(nextTab, i + n, hn);
+                            setTabAt(tab, i, fwd);
+                            advance = true;
+                        }
+                        else if (f instanceof ReservationNode)
+                            throw new IllegalStateException("Recursive update");
+                    }
+                }
+            }
+        }
+}
+```
+tab是当前正在使用的哈希表(这里假如tab的长度是32),nextTab 是扩容后的新表,定义变量n等于tab的长度,接下来是计算stride步长,这个变量有如下作用:
+
+- stride表示迁移任务的粒度每次线程从transferIndex中领取多少个桶位。
+
+- 这个步长要尽量小(越小越能更均匀分配任务)，但不能小于MIN_TRANSFER_STRIDE(16)。
+
+- n >>> 3 约等于 n / 8，是经验值。
+
+- 多线程扩容的基础就是通过这个粒度进行任务切片。
+
+多线程情况下就根据这个值来确定每个线程可以并发扩容的槽位就是帮助把老数组中的指定槽的数据搬到新数组中,接着往下分析就能真正理解它的用处。
+
+判断nextTab是否等于null,如果等于null,说明是第一个线程进行扩容操作,Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n << 1];这个操作是新创建一个容量
+是之前容量2倍的新数组，把它赋值给nextTab变量，成员属性nextTable指向nextTab,成员属性transferIndex=n,它是关键表示还未处理的桶从后往前递减,定义变量nextn等于新数组的长度，创建一个ForwardingNode对象一个占位标志，放入旧表中，表示这个桶已经被迁移,advance表示当前线程是否需要重新获取transferIndex,finishing：用于标识扩容是否即将结束，只有最后一个线程会设置为true。
+接着执行一个for的死循环，主要是搬迁桶，直至完成所有桶的数据迁移,下面详情分析一下这段死循环的逻辑。
+
+第一次for循环时候i=0,bound=0,--i，判断--i >= bound || finishing是否成立，很显然是不成立，走到else if判断(nextIndex = transferIndex) <= 0是否小于0，很显然也不成立，在走到else if判断U.compareAndSetInt(this, TRANSFERINDEX, nextIndex, nextBound = (nextIndex > stride ? nextIndex - stride : 0))能否成功，很显然第一个线程会成功的，此时把
+transferIndex设置为nextIndex - stride即32-16=16并把这个值赋值给nextBound继而赋值给变量bound，此时i=nextIndex-1,即i=31,代码分析到这里就可以看出当前线程能处理槽位置是
+bound-i之前的，即16-31之间的，把advance设置为false,跳出死循环while，此时又走到一个if else if的判断，第一次时候是不能搬完成的，我们先分析不能搬完成的逻辑。
+
+- **else if ((f = tabAt(tab, i)) == null) 这种情况成立的条件情况下**
+
+    此种情况表示原来桶的指定下标没有元素，把这个位置元素更新为ForwardingNode节点，表示它是一个特殊的哨兵节点,表示这个槽位的数据已经迁移完毕或无需迁移（为空）。
+
+- **else if ((fh = f.hash) == MOVED)**
+
+     表示如果当前槽位f是一个ForwardingNode(也就是f.hash == MOVED），说明这个位置的迁移已经完成了，那就跳到下一个槽位继续迁移（advance = true）。
+
+如果上面条件都不成立,说明是要搬迁的节点处有数据,定义ln,hn变量，分别代表低位和高位元素，计算出fn代表hash值如果大于等于0说明是链表结构，然后计算runBit变量的值,表示当前节点的hash & n值(决定节点在新表中的位置)。lastRun：找到最后一个runBit变化的节点，这样可以减少后续遍历的次数。
+判断runBit如果等于0说明是低位链表仍然留在原位置,hn=null(它是高位链表(迁移到 i + n 的位置)),如果runBit不等于0，高位链表hn =lastRun，低位链表ln=null,接着执行一段for循环,结束条件是f==lastRun,得到相应节点的hash值和key、value值赋值给
+新元素Node,判断hash & n是否等于0，如果等于头插法构建低位链表,否则就头插法构建高位链表，接着调用setTabAt方法把低位链表放回新数组原位置i,高位链表放到i + n,旧表位置标记为ForwardingNode（表示已迁移）,迁移完成以后
+继续处理下一个桶,如此反复循环多线程进行迁移操作。
+
+当所有节点都移动完成以后会执行到扩容的这个分析的代码:
+```java
+if (i < 0 || i >= n || i + n >= nextn) {
+    int sc;
+    if (finishing) {
+        nextTable = null;
+        table = nextTab;
+        sizeCtl = (n << 1) - (n >>> 1);
+        return;
+    }
+    if (U.compareAndSetInt(this, SIZECTL, sc = sizeCtl, sc - 1)) {
+        if ((sc - 2) != resizeStamp(n) << RESIZE_STAMP_SHIFT)
+            return;
+        finishing = advance = true;
+        i = n; // recheck before commit
+    }
+}
+```
+这段代码按照逻辑执行顺序是先CAS操作U.compareAndSetInt(this, SIZECTL, sc = sizeCtl, sc - 1),如果成功判断(sc - 2) != resizeStamp(n) << RESIZE_STAMP_SHIFT如果是true,说明不是最后一个线程直接退出就行，如果相等说明是最后一个线程，它会做
+收尾工作，把finishing = advance = true,然后把nextTable执行null,table指向新的数组，计算下一次扩容sizeCtl，然后整个流程就结束了。
+
+## 五、总结
+
+ConcurrentHashMap通过CAS无锁化、分段锁、协作式扩容及智能数据结构（链表/树动态转换），在保证线程安全的同时极大提升了并发性能。其扩容机制中的 ForwardingNode跳转与多线程任务分片设计，堪称并发容器的典范，尤其适合高吞吐、低延迟的分布式场景。
+
+
+
