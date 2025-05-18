@@ -13,3 +13,5 @@
   - [TreeMap源码分析](docs/jdk/TreeMap.md)
   - [ConcurrentHashMap源码分析](docs/jdk/ConcurrentHashMap.md)
   - [Queue](docs/jdk/Queue.md)
+  - [ArrayBlockingQueue](docs/jdk/ArrayBlockingQueue.md)
+  - [PriorityQueue](docs/jdk/PriorityQueue.md)
