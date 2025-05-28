@@ -15,3 +15,4 @@
   - [Queue](docs/jdk/Queue.md)
   - [ArrayBlockingQueue](docs/jdk/ArrayBlockingQueue.md)
   - [PriorityQueue](docs/jdk/PriorityQueue.md)
+  - [DelayQueue](docs/jdk/DelayQueue.md)
