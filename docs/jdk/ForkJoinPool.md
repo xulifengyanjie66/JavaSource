@@ -66,18 +66,19 @@ public class ForkJoinPool extends AbstractExecutorService
 线程池管理工作线程，任务通过 ForkJoinTask提交执行
 
 ## 四、主要成员字段和构造函数
-| 参数名                    |               类型                |              作用              |
-  |:-----------------------|:-------------------------------:|:----------------------------:|
-| parallelism	 |               int               |        表示并行度，也就是目标线程数，通常建议设置为 Runtime.getRuntime().availableProcessors()        |
-| factory          |  ForkJoinWorkerThreadFactory	   | 用于自定义工作线程的创建方式，比如加日志、命名等 
-| handler | Thread.UncaughtExceptionHandler | 如果任务抛出未捕获异常，如何处理（比如记录日志） |
-| asyncMode                     |            boolean	             |      是否启用异步模式，默认 false 是 LIFO（后进先出），用于递归任务更快合并；设置为 true 是 FIFO，更像普通线程池      |
-| corePoolSize                     |              int	               |      （高级用法）控制线程池核心线程数量，仅在“托管模式”才会生效（常用构造函数不会暴露这个）      |
-| maximumPoolSize                     |              int	               |      最大线程数限制（托管池中才用到）     |
-| minimumRunnable                     |              int	               |      	保证多少个任务是 runnable 状态，用于动态扩容线程（托管池相关）     |
-| saturate                     |              Predicate<ForkJoinPool>	               |      	判断是否“饱和”，触发线程扩展的策略     |
-| keepAliveTime                     |              long	               |      	线程空闲多久后被回收（适用于托管模式）    |
-| unit                     |              TimeUnit	               |      	keepAliveTime 的时间单位   |
+| 参数名           | 类型                          | 作用 |
+|:----------------|:-----------------------------:|:-----|
+| `parallelism`    | `int`                         | 表示并行度，建议设置为 `Runtime.getRuntime().availableProcessors()` |
+| `factory`        | `ForkJoinWorkerThreadFactory` | 自定义工作线程的创建方式，比如加日志、命名等 |
+| `handler`        | `Thread.UncaughtExceptionHandler` | 任务抛出未捕获异常时的处理方式，例如记录日志 |
+| `asyncMode`      | `boolean`                     | 是否启用异步模式，默认 false 为 LIFO（后进先出）；true 为 FIFO，更像普通线程池 |
+| `corePoolSize`   | `int`                         | 高级用法，仅托管模式生效，控制核心线程数 |
+| `maximumPoolSize`| `int`                         | 托管池中最大线程数限制 |
+| `minimumRunnable`| `int`                         | 保证至少多少个任务处于 runnable 状态，用于动态扩容线程（托管池） |
+| `saturate`       | `Predicate<ForkJoinPool>`     | 判断是否“饱和”，触发线程扩展的策略 |
+| `keepAliveTime`  | `long`                        | 空闲线程多久后被回收（托管池适用） |
+| `unit`           | `TimeUnit`                    | `keepAliveTime` 的时间单位 |
+
 
 说明一下:这里的corePoolSize看似像普通线程池的中的核心线程数，但是这里它并不是普通线程池那个参数，它是jdk21中的托管模式采用的，实际上控制线程数量的参数是
 parallelism，这里知道一下就可以了，不必深究。
