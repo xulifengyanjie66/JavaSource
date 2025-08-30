@@ -1,21 +1,5 @@
 # RocketMQ源码详解(NameServer启动流程)
-- [1. NameServer 简介](#1-nameserver-简介)
-- [2. 启动流程](#2-启动流程)
-    - [2.1 Main 方法入口](#21-main-方法入口)
-    - [2.2 初始化配置](#22-初始化配置)
-    - [2.3 创建 Controller](#23-创建-controller)
-    - [2.4 启动核心组件](#24-启动核心组件)
-- [3. 核心组件解析](#3-核心组件解析)
-    - [3.1 RouteInfoManager](#31-routeinfomanager)
-    - [3.2 KVConfigManager](#32-kvconfigmanager)
-    - [3.3 RemotingServer（Netty）](#33-remotingservernetty)
-- [4. Broker 注册与心跳](#4-broker-注册与心跳)
-    - [4.1 Broker 注册流程](#41-broker-注册流程)
-    - [4.2 心跳检查机制](#42-心跳检查机制)
-- [5. 常见请求处理流程](#5-常见请求处理流程)
-    - [5.1 GET_ROUTEINFO_BY_TOPIC](#51-get_routeinfo_by_topic)
-    - [5.2 PUT_KV_CONFIG / GET_KV_CONFIG](#52-put_kv_config--get_kv_config)
-- [6. 总结](#6-总结)
+
 
 ## 一、NameServer简介
  消息中间件的设计思路一般是基于主题订阅发布的机制，消息生产者(Producer)发送某一个主题到消息服务器，消息服务器负责将消息持久化存储，消息消费者(Consumer)订阅该兴趣的主题，消息服务器根据订阅信息(路由信息)将消息推送到消费者(Push模式)或者消费者主动向消息服务器拉去(Pull模式)，从而实现消息生产者与消息消费者解耦。
@@ -27,15 +11,119 @@ NameServer和Broker和Producer(生产者)和Consumer(消费者)之间关系。
 - Broker消息服务器在启动的时向所有NameServer注册。
 - 消息生产者(Producer)在发送消息时之前先从NameServer获取Broker服务器地址列表，然后根据负载均衡算法从列表中选择一台服务器进行发送。
 - NameServer与每台Broker保持长连接，并间隔30S检测Broker是否存活，如果检测到Broker宕机，则从路由注册表中删除。但是路由变化不会马上通知消息生产者。这样设计的目的是为了降低NameServer实现的复杂度，在消息发送端提供容错机制保证消息发送的可用性。
+- 本篇源码基于RocketMQ 4.9.8版本。
 
-## 二、NamesrvConfig介绍
-RocketMQ的NamesrvConfig 类是用于配置 NameServer 的相关参数，它是 RocketMQ 中非常核心的组件之一，负责管理和调度消息的元数据。NamesrvConfig 配置了 NameServer 的一些基本行为，确保消息能够正确地路由、调度，并提供集群中各节点的元数据。
+## 二、创建NamesrvController过程
+Namesrv启动的入口地址在org.apache.rocketmq.namesrv.NamesrvStartup的main方法中，该方法源码如下:
 
-NamesrvController的initialize方法，该方法的源码如下:
+```java
+public static void main(String[] args) {
+    main0(args);
+}
+```
+
+又调用了main0方法,该方法源码如下:
+
+```java
+public static NamesrvController main0(String[] args) {
+
+        try {
+            NamesrvController controller = createNamesrvController(args);
+            start(controller);
+            String tip = "The Name Server boot success. serializeType=" + RemotingCommand.getSerializeTypeConfigInThisServer();
+            log.info(tip);
+            System.out.printf("%s%n", tip);
+            return controller;
+        } catch (Throwable e) {
+            e.printStackTrace();
+            System.exit(-1);
+        }
+
+        return null;
+}
+```
+
+又调用了createNamesrvController方法，该方法源码如下:
+
+```java
+public static NamesrvController createNamesrvController(String[] args) throws IOException, JoranException {
+         //解析命令行参数
+        // ... (省略具体的解析代码)
+        final NamesrvConfig namesrvConfig = new NamesrvConfig();
+        final NettyServerConfig nettyServerConfig = new NettyServerConfig();
+        nettyServerConfig.setListenPort(9876);
+        if (commandLine.hasOption('c')) {
+           // ... (省略加载properties文件和属性映射的代码)
+        }
+        // 配置日志框架
+        // ... (省略Logback配置代码)
+        final NamesrvController controller = new NamesrvController(namesrvConfig, nettyServerConfig);
+
+        // remember all configs to prevent discard
+        controller.getConfiguration().registerConfig(properties);
+
+        return controller;
+   }
+```
+
+首先创建NamesrvConfig对象,RocketMQ的NamesrvConfig 类是用于配置 NameServer 的相关参数，它是 RocketMQ 中非常核心的组件之一，负责管理和调度消息的元数据。NamesrvConfig 配置了 NameServer 的一些基本行为，确保消息能够正确地路由、调度，并提供集群中各节点的元数据。
+
+创建Netty服务端对象NettyServerConfig并设置端口号是9876,下面有`commandLine.hasOption`代码是从命令行中读取参数并且设置到NamesrvConfig,NettyServerConfig。
+
+创建NamesrvController对象并且传入构造函数NamesrvConfig、NettyServerConfig对象，它的构造函数如下:
+
+```java
+public NamesrvController(NamesrvConfig namesrvConfig, NettyServerConfig nettyServerConfig) {
+    this.namesrvConfig = namesrvConfig;
+    this.nettyServerConfig = nettyServerConfig;
+    this.kvConfigManager = new KVConfigManager(this);
+    this.routeInfoManager = new RouteInfoManager();
+    this.brokerHousekeepingService = new BrokerHousekeepingService(this);
+    this.configuration = new Configuration(
+        log,
+        this.namesrvConfig, this.nettyServerConfig
+    );
+    this.configuration.setStorePathFromConfig(this.namesrvConfig, "configStorePath");
+}
+```
+
+
+
+- 初始化成员变量RouteInfoManager，它主要负责维护 Broker、Topic 的路由注册、变更、查询等信息。
+- 初始化成员变量BrokerHousekeepingService,它主要负责监控与 Broker 的连接状态，处理断连等异常情况。
+
+创建完NamesrvController对象返回到main0方法，调用start(controller),该方法源码如下:
+
+```java
+public static NamesrvController start(final NamesrvController controller) throws Exception {
+
+        if (null == controller) {
+            throw new IllegalArgumentException("NamesrvController is null");
+        }
+
+        boolean initResult = controller.initialize();
+        if (!initResult) {
+            controller.shutdown();
+            System.exit(-3);
+        }
+
+        Runtime.getRuntime().addShutdownHook(new ShutdownHookThread(log, (Callable<Void>) () -> {
+            controller.shutdown();
+            return null;
+        }));
+
+        controller.start();
+
+        return controller;
+}
+```
+
+先调用controller的initialize方法，该方法源码如下:
+
 ```java
 public boolean initialize() {
 
-        ..................
+        this.kvConfigManager.load();
 
         this.remotingServer = new NettyRemotingServer(this.nettyServerConfig, this.brokerHousekeepingService);
 
@@ -48,9 +136,51 @@ public boolean initialize() {
 
         this.scheduledExecutorService.scheduleAtFixedRate(NamesrvController.this.kvConfigManager::printAllPeriodically, 1, 10, TimeUnit.MINUTES);
 
-        .................................
+        if (TlsSystemConfig.tlsMode != TlsMode.DISABLED) {
+            // Register a listener to reload SslContext
+            try {
+                fileWatchService = new FileWatchService(
+                    new String[] {
+                        TlsSystemConfig.tlsServerCertPath,
+                        TlsSystemConfig.tlsServerKeyPath,
+                        TlsSystemConfig.tlsServerTrustCertPath
+                    },
+                    new FileWatchService.Listener() {
+                        boolean certChanged, keyChanged = false;
+                        @Override
+                        public void onChanged(String path) {
+                            if (path.equals(TlsSystemConfig.tlsServerTrustCertPath)) {
+                                log.info("The trust certificate changed, reload the ssl context");
+                                reloadServerSslContext();
+                            }
+                            if (path.equals(TlsSystemConfig.tlsServerCertPath)) {
+                                certChanged = true;
+                            }
+                            if (path.equals(TlsSystemConfig.tlsServerKeyPath)) {
+                                keyChanged = true;
+                            }
+                            if (certChanged && keyChanged) {
+                                log.info("The certificate and private key changed, reload the ssl context");
+                                certChanged = keyChanged = false;
+                                reloadServerSslContext();
+                            }
+                        }
+                        private void reloadServerSslContext() {
+                            ((NettyRemotingServer) remotingServer).loadSslContext();
+                        }
+                    });
+            } catch (Exception e) {
+                log.warn("FileWatchService created error, can't load the certificate dynamically");
+            }
+        }
+
+        return true;
+ }
 ```
-创建一个NettyRemotingServer对象，它主要是与netty网络服务有关的对象，它的构造函数如下：
+
+
+
+创建一个NettyRemotingServer对象，它主要是与Netty网络服务有关的对象，它的构造函数如下：
 ```java
 public NettyRemotingServer(final NettyServerConfig nettyServerConfig,
         final ChannelEventListener channelEventListener) {
@@ -116,15 +246,32 @@ public NettyRemotingServer(final NettyServerConfig nettyServerConfig,
         loadSslContext();
     }
 ```
-创建一个固定线程池对象ExecutorService publicExecutor，它的线程池线程对象是4。
+创建一个固定线程池对象ExecutorService publicExecutor，它的线程池线程对象是4。判断当前操作系统的情况:
 
-判断是否是Linux系统，如果是Linux系统，创建一个EpollEventLoopGroup的boss线程池，线程池线程数量是1，线程工厂是自定义工厂,创建一个EpollEventLoopGroup的
-worker线程池，线程池线程数量是nettyServerConfig.getServerSelectorThreads()(如额外配置默认是3),线程工厂同样是是自定义工厂。
+- 如果是Linux系统,创建一个EpollEventLoopGroup的boss线程池，线程池线程数量是1，线程工厂是自定义工厂,创建一个EpollEventLoopGroup的
+  worker线程池，线程池线程数量是nettyServerConfig.getServerSelectorThreads()(默认配置是3),线程工厂同样是是自定义工厂。
 
-判断是否是Linux系统，如果不是Linux系统，创建一个NioEventLoopGroup的boss线程池，线程池线程数量是1，线程工厂是自定义工厂,创建一个NioEventLoopGroup的
-worker线程池，线程池线程数量是nettyServerConfig.getServerSelectorThreads()(如额外配置默认是3),线程工厂同样是是自定义工厂。
+- 如果不是Linux系统，创建一个NioEventLoopGroup的boss线程池，线程池线程数量是1，线程工厂是自定义工厂,创建一个NioEventLoopGroup的
+  worker线程池，线程池线程数量是nettyServerConfig.getServerSelectorThreads()(默认配置是3),线程工厂同样是是自定义工厂。
 
-调用NamesrvController的start方法，该方法源码如下:
+这段代码`Executors.newFixedThreadPool(nettyServerConfig.getServerWorkerThreads(), new ThreadFactoryImpl("RemotingExecutorThread_"));`
+
+创建一个固定的线程池，线程池数量是取得nettyServerConfig.getServerWorkerThreads()的数量，默认是8，它的主要作用业务处理。
+
+调用方法`this.registerProcessor();`注册处理器，将具体的 **请求处理器** 注册到 `remotingServer` 上，比如处理注册 Broker 的请求、处理客户端路由查询请求,不同的请求 code 会对应不同的 `NettyRequestProcessor` 实现类。
+
+`this.scheduledExecutorService.scheduleAtFixedRate(NamesrvController.this.routeInfoManager::scanNotActiveBroker, 5, 10, TimeUnit.SECONDS);`
+
+这段代码主要定时处理扫描不活跃的Broker,每隔 10 秒执行一次，首次延迟 5 秒。检查 Broker 是否还活着（最后心跳时间超过 120 秒则判定失联）,将失联的 Broker 从路由表中移除，保持数据一致性。下面以一个表格说明一下这些参数得作用：
+
+|           参数名            | 默认值 |              说明              |
+| :-------------------------: | :----: | :----------------------------: |
+|     serverWorkerThreads     |   8    |        Netty 业务线程数        |
+|    serverSelectorThreads    |   3    |        Netty I/O 线程数        |
+| brokerChannelMaxIdleSeconds |  120   |      Broker 心跳超时时间       |
+| scanNotActiveBrokerInterval |   10   | 扫描不活跃 Broker 的间隔（秒） |
+
+ 接着调用NamesrvController的start方法，该方法源码如下:
 ```java
  public void start() throws Exception {
         this.remotingServer.start();
@@ -228,3 +375,15 @@ private void prepareSharableHandlers() {
 ```
 分别初始化HandshakeHandler handshakeHandler、NettyEncoder encoder(Netty编码器对象)、NettyConnectManageHandler connectionManageHandler、NettyServerHandler serverHandler(用来处理入站数据),接下来就是
 调用serverBootstrap的group方法把上面组件注册上，然后调用bind方法启动Netty服务。
+
+## 三、总结
+
+NameServer 作为 RocketMQ 的元数据中枢和轻量级路由发现服务，其启动流程充分体现了**简洁高效、职责清晰**的设计哲学。整个过程并非简单地启动一个网络服务，而是有条不紊地完成了三件核心大事：
+
+- **解析与装配**：读取命令行与环境配置，初始化核心参数，为后续组件提供运行依据。
+
+- **初始化核心组件:** 构建 `RouteInfoManager`（路由表）、`KVConfigManager`（配置管理）、`BrokerHousekeepingService`（连接监护）等核心管理组件，各司其职。
+- **启动服务与定时任务**：初始化 Netty 服务器以接收网络请求，并启动两个关键的后台线程：
+  - **心跳检测**：定期扫描并清理失效的 Broker 节点，确保路由信息的实时性与准确性。
+  - **配置持久化**：定期将运行时配置落盘，保证数据的可恢复性。
+
