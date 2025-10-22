@@ -351,14 +351,14 @@ protected PutMessageResult encode(MessageExtBrokerInner msgInner) {
 |  10  |          BORNHOST           | byte[] |       6~18       |      生产者 IP + 端口       |
 |  11  |       STORETIMESTAMP        |  long  |        8         |       消息存储时间戳        |
 |  12  |      STOREHOSTADDRESS       | byte[] |       6~18       |      Broker IP + 端口       |
-|      |       RECONSUMETIMES        |  int   |        4         |        消费重试次数         |
-|      | PREPARED_TRANSACTION_OFFSET |  long  |        8         |    事务消息的预提交偏移     |
-|      |            BODY             |  int   |        4         |         消息体长度          |
-|      |        BODY CONTENT         | byte[] |    bodyLength    |           消息体            |
-|      |            TOPIC            |  byte  |        1         |          主题长度           |
-|      |        TOPIC CONTENT        | byte[] |   topicLength    |          主题内容           |
-|      |         PROPERTIES          | short  |        2         |        消息属性长度         |
-|      |     PROPERTIES CONTENT      | byte[] | propertiesLength |        消息属性内容         |
+|  13  |       RECONSUMETIMES        |  int   |        4         |        消费重试次数         |
+|  14  | PREPARED_TRANSACTION_OFFSET |  long  |        8         |    事务消息的预提交偏移     |
+|  15  |            BODY             |  int   |        4         |         消息体长度          |
+|  16  |        BODY CONTENT         | byte[] |    bodyLength    |           消息体            |
+|  17  |            TOPIC            |  byte  |        1         |          主题长度           |
+|  18  |        TOPIC CONTENT        | byte[] |   topicLength    |          主题内容           |
+|  19  |         PROPERTIES          | short  |        2         |        消息属性长度         |
+|  20  |     PROPERTIES CONTENT      | byte[] | propertiesLength |        消息属性内容         |
 
 ```java
 PutMessageContext putMessageContext = new PutMessageContext(generateKey(putMessageThreadLocal.getKeyBuilder(), msg));
