@@ -60,7 +60,7 @@ producer.sendOneway(msg);
 
 
 
-![image-20250809141538949](C:\Users\Administrator\AppData\Roaming\Typora\typora-user-images\image-20250809141538949.png)
+![image-20250809141538949](C:\Users\Administrator\Desktop\image-20250809141538949.png)
 
 
 
