@@ -744,7 +744,47 @@ protected void processServletContainerInitializers() {
 先获取应用的父加载器的ClassLoader去$CATALINA_HOME/lib寻找`META-INF/services/javax.servlet.ServletContainerInitializer`,如果有加入到有顺序的LinkedHashSet中这样可以保证父ClassLoader加载的在前面，接着在执行自己的ClassLoader去寻找同样加入到LinkedHashSet中，然后调用loadServices方法反射创建`META-INF/services/javax.servlet.ServletContainerInitializer`指定的类并把它实例化为对象。
 
 接着执行返回到processServletContainerInitializers方法得到一个`List<ServletContainerInitializer> detectedScis`集合，遍历该集合把它放入到Map<ServletContainerInitializer,Set<Class<?>>>数据结构中，其中key是得到的ServletContainerInitializer对象，value是一个Set集合，接着判断ServletContainerInitializer上是否有HandlesTypes注解类，`@HandlesTypes` 是 **Servlet 3.0+ 中 ServletContainerInitializer的一个关键注解**，它的作用主要是 **告诉容器在启动阶段哪些类对这个 SCI 可能感兴趣**，方便容器提前扫描和传递给 `onStartup` 方法。
-
+它的主要查找逻辑是找到所有HandlesTypes注解修饰的类所有实现类最终加入到initializerClassMap的Value中。
+接着会执行ContextConfig的processClass方法,该方法主要是查找是否有@WebServlet、WebFilter、WebListener注解把它们扫描到对应的定义类中去，我们来看看这个方法源码:
+```java
+protected void processClass(WebXml fragment, JavaClass clazz) {
+        AnnotationEntry[] annotationsEntries = clazz.getAnnotationEntries();
+        if (annotationsEntries != null) {
+            String className = clazz.getClassName();
+            for (AnnotationEntry ae : annotationsEntries) {
+                String type = ae.getAnnotationType();
+                if ("Ljavax/servlet/annotation/WebServlet;".equals(type)) {
+                    processAnnotationWebServlet(className, ae, fragment);
+                } else if ("Ljavax/servlet/annotation/WebFilter;".equals(type)) {
+                    processAnnotationWebFilter(className, ae, fragment);
+                } else if ("Ljavax/servlet/annotation/WebListener;".equals(type)) {
+                    fragment.addListener(className);
+                } else {
+                    // Unknown annotation - ignore
+                }
+            }
+        }
+}
+```
+首先获取类名称，然后获取它的类上的注解，如果注解是WebServlet,调用processAnnotationWebServlet方法，该方法源码如下:
+```java
+protected void processAnnotationWebServlet(String className, AnnotationEntry ae, WebXml fragment) {
+        String servletName = null;
+        List<ElementValuePair> evps = ae.getElementValuePairs();
+        for (ElementValuePair evp : evps) {
+           String name = evp.getNameString();
+           if ("name".equals(name)) {
+            servletName = evp.getValue().stringifyValue();
+            break;
+           }
+        }
+        ServletDef servletDef = new ServletDef();
+        servletDef.setServletName(servletName);
+        servletDef.setServletClass(className);
+}
+```
+先获取WebFilter注解的name名称然后赋值给变量servletName，变量evps判断是否有urlPatterns属性，代表的是Servlet的请求路径，如果有解析出来赋值给变量urlPatterns，它是一个String数组
+判断注解是否有loadOnStartup属性如果有设置到ServletDef上,判断是否有initParams属性
 
 
 
