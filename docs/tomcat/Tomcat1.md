@@ -82,7 +82,7 @@ shared.loader=${catalina.base}/shared/classes,${catalina.base}/shared/lib/*.jar
   - 加载多个 Web 应用之间共享的 jar
   - 避免每个 WebApp 自己放同一个 jar，节省内存
 
-**1.1.2 context.xml**
+#### **1.1.2 context.xml**
 
 `context.xml` 用来配置“某一个 Web 应用（Context）”的运行环境，而不是整个 Tomcat。
 
@@ -95,7 +95,7 @@ shared.loader=${catalina.base}/shared/classes,${catalina.base}/shared/lib/*.jar
 
 配置在 `$CATALINA_BASE/conf/context.xml` 里的内容，会作为「所有 Web 应用的默认 Context 配置」，对每一个 Web 应用都生效。
 
-**1.1.3 server.xml**
+#### **1.1.3 server.xml**
 
 tomcat的主要配置文件，解析器用这个文件在启动时根据规范创建容器。
 
@@ -168,16 +168,14 @@ Server是顶级元素，代表一个Tomcat实例。可以包含一个或多个Se
 >
 >     ​        处理HTTP请求，使得Tomcat成为一个HTTP服务器。客户端可以通过Connector向服务器发送HTTP请求，接收服务器端的HTTP响应信息。
 >
->     ~~~xml
->         ```xml
+>     ```xml
 >            <Connector port="8080" protocol="HTTP/1.1" connectionTimeout="20000" redirectPort="8443" />
->         ```
->     ~~~
+>     ```
 >
 >   - **Engine引擎元素**
 >
 >     引擎是容器中最高级别的部分。可以包含一个或多个Host。Tomcat服务器可以配置为运行在多个主机名上，包括虚拟主机。
->   
+>
 >     ```xml
 >     <Engine name="Catalina" defaultHost="localhost">
 >     ```
@@ -195,7 +193,7 @@ Server是顶级元素，代表一个Tomcat实例。可以包含一个或多个Se
 >     - **Host**
 >
 >       一个Host定义了在Engine下的一个虚拟机，反过来其又支持多个Context（web应用）。
->   
+>
 >       ```xml
 >       <Host name="localhost"  appBase="webapps" unpackWARs="true" autoDeploy="true">
 >       ```
@@ -205,7 +203,7 @@ Server是顶级元素，代表一个Tomcat实例。可以包含一个或多个Se
 >         虚拟主机名（域名）,用来匹配请求里的 `Host` 请求头,浏览器访问时：`http://localhost:8080`命中这个host
 >
 >       - appBase
->   
+>
 >         完整路径是$CATALINA_BASE/webapps，这个目录下:webapps/
 >          ├─ ROOT/
 >          ├─ docs/
@@ -227,7 +225,7 @@ Server是顶级元素，代表一个Tomcat实例。可以包含一个或多个Se
 >         Value（阀门）作为请求的前置处理程序，可以在请求发送到应用之前拦截HTTP请求。可以定义在任何容器中，比如Engine、Host、Context和Cluster。默认配置中，AccessLogValue会拦截HTTP请求，并在日志文件中创建一个切入点，Valve ≈ Tomcat 内部拦截器，
 >
 >         Filter ≈ Servlet 规范的拦截器，本例配置是放在Host下面，意味着Value作用范围是Host 下的所有 Web 应用
->   
+>
 >         ```xml
 >         <Valve className="org.apache.catalina.valves.AccessLogValve" directory="logs"
 >                        prefix="localhost_access_log" suffix=".txt"
@@ -235,18 +233,18 @@ Server是顶级元素，代表一个Tomcat实例。可以包含一个或多个Se
 >         ```
 >
 >         这个配置是Tomcat 内置访问日志 Valve，记录 **每一次 HTTP 请求**，directory="logs"，表示日志存放目录（相对于 `$CATALINA_BASE`），prefix / suffix，表示日志文件名规则，例如:
->   
+>
 >         ```text
 >         localhost_access_log2025-12-16.txt
 >         ```
 >
 >         pattern代表了日志格式，日志格式通常是这样的:
->   
+>
 >         ```
 >         127.0.0.1 - - [16/Dec/2025:10:20:01 +0800] "GET /order/api/list HTTP/1.1" 200 512
 >         ```
 
-**1.1.4 web.xml**
+#### **1.1.4 web.xml**
 
 `web.xml` 配的是「Web 应用里的 Servlet 组件」,例如:Servlet、Filter、Filter、URL 映射、Session 配置、Welcome file、错误页等。
 
