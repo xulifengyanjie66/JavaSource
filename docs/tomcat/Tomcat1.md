@@ -1,5 +1,9 @@
 # Tomcat源码分析一(Tomcat目录和配置文件说明)
 
+## 前言
+
+Tomcat作为一款轻量级、开源且广泛使用的Java Web服务器和Servlet容器，其内部架构和配置机制对于Java Web开发者而言具有重要的学习价值。深入理解Tomcat的目录结构、配置文件以及类加载机制，不仅有助于我们更好地部署和管理Web应用，还能在遇到性能调优、安全配置、多环境部署等问题时提供清晰的解决思路。本文将从Tomcat的基础目录结构入手，逐步解析其核心配置文件的作用与配置细节，为后续深入分析Tomcat源码打下坚实的基础。
+
 
 
 ## 一、Tomcat目录说明
@@ -164,14 +168,16 @@ Server是顶级元素，代表一个Tomcat实例。可以包含一个或多个Se
 >
 >     ​        处理HTTP请求，使得Tomcat成为一个HTTP服务器。客户端可以通过Connector向服务器发送HTTP请求，接收服务器端的HTTP响应信息。
 >
->             ```xml
->                <Connector port="8080" protocol="HTTP/1.1" connectionTimeout="20000" redirectPort="8443" />
->             ```
+>     ~~~xml
+>         ```xml
+>            <Connector port="8080" protocol="HTTP/1.1" connectionTimeout="20000" redirectPort="8443" />
+>         ```
+>     ~~~
 >
 >   - **Engine引擎元素**
 >
 >     引擎是容器中最高级别的部分。可以包含一个或多个Host。Tomcat服务器可以配置为运行在多个主机名上，包括虚拟主机。
->
+>   
 >     ```xml
 >     <Engine name="Catalina" defaultHost="localhost">
 >     ```
@@ -189,7 +195,7 @@ Server是顶级元素，代表一个Tomcat实例。可以包含一个或多个Se
 >     - **Host**
 >
 >       一个Host定义了在Engine下的一个虚拟机，反过来其又支持多个Context（web应用）。
->
+>   
 >       ```xml
 >       <Host name="localhost"  appBase="webapps" unpackWARs="true" autoDeploy="true">
 >       ```
@@ -199,7 +205,7 @@ Server是顶级元素，代表一个Tomcat实例。可以包含一个或多个Se
 >         虚拟主机名（域名）,用来匹配请求里的 `Host` 请求头,浏览器访问时：`http://localhost:8080`命中这个host
 >
 >       - appBase
->
+>   
 >         完整路径是$CATALINA_BASE/webapps，这个目录下:webapps/
 >          ├─ ROOT/
 >          ├─ docs/
@@ -221,7 +227,7 @@ Server是顶级元素，代表一个Tomcat实例。可以包含一个或多个Se
 >         Value（阀门）作为请求的前置处理程序，可以在请求发送到应用之前拦截HTTP请求。可以定义在任何容器中，比如Engine、Host、Context和Cluster。默认配置中，AccessLogValue会拦截HTTP请求，并在日志文件中创建一个切入点，Valve ≈ Tomcat 内部拦截器，
 >
 >         Filter ≈ Servlet 规范的拦截器，本例配置是放在Host下面，意味着Value作用范围是Host 下的所有 Web 应用
->
+>   
 >         ```xml
 >         <Valve className="org.apache.catalina.valves.AccessLogValve" directory="logs"
 >                        prefix="localhost_access_log" suffix=".txt"
@@ -229,13 +235,13 @@ Server是顶级元素，代表一个Tomcat实例。可以包含一个或多个Se
 >         ```
 >
 >         这个配置是Tomcat 内置访问日志 Valve，记录 **每一次 HTTP 请求**，directory="logs"，表示日志存放目录（相对于 `$CATALINA_BASE`），prefix / suffix，表示日志文件名规则，例如:
->
+>   
 >         ```text
 >         localhost_access_log2025-12-16.txt
 >         ```
 >
 >         pattern代表了日志格式，日志格式通常是这样的:
->
+>   
 >         ```
 >         127.0.0.1 - - [16/Dec/2025:10:20:01 +0800] "GET /order/api/list HTTP/1.1" 200 512
 >         ```
@@ -335,3 +341,7 @@ Server是顶级元素，代表一个Tomcat实例。可以包含一个或多个Se
   ```
 
   
+
+## 结束语
+
+通过对Tomcat目录结构和核心配置文件的梳理，我们可以清晰地看到Tomcat作为一个成熟的Servlet容器是如何通过模块化的配置来管理类加载、容器结构、虚拟主机、Web应用以及日志等功能的。理解这些基础配置不仅有助于我们在实际开发中灵活部署和调优Tomcat，也为后续深入理解Tomcat的源码架构和运行机制奠定了重要基础。在后续的文章中，我们将进一步深入Tomcat的源码，探索其请求处理流程、连接器机制、容器生命周期等核心功能，敬请期待。
