@@ -214,6 +214,46 @@ public void load() {
 
 先调用parseServerXml方法解析conf/server.xml配置文件，把它封装为Server对象，Server对象里面又有多个Service对象，就行server.xml那样嵌套的结构一样。
 
+值得说明一点的是在实例化`StandardHost`对象时候，构造方法创建一个是这样的：
+
+```java
+    public StandardHost() {
+
+        super();
+        pipeline.setBasic(new StandardHostValve());
+
+    }
+```
+
+其中pipeline的类型是StandardPipeline，它实现了Pipeline接口，用于管理执行Valves添加和执行，这里手动实例化了StandardHostValve，后面请求的时候会调用这个类的invoke方法。
+
+同样实例化StandardContext时候，它的构造方法也是创建一个Pipeline接口，代码如下:
+
+```java
+public StandardContext() {
+
+    super();
+    pipeline.setBasic(new StandardContextValve());
+}
+```
+
+这里手动实例化了一个StandardContextValve对象，后面请求的时候会调用这个类的invoke方法。
+
+实例化StandardWrapper对象时候同样创建一个StandardWrapperValve对象，后面请求时候会调用这个类的invoke方法，代码如下:
+
+```java
+    public StandardWrapper() {
+
+        super();
+        swValve = new StandardWrapperValve();
+        pipeline.setBasic(swValve);
+        broadcaster = new NotificationBroadcasterSupport();
+
+    }
+```
+
+
+
 设置Server对象的Catalina、catalinaHome、catalinaBase属性分为Catalina对象、catalinaHome文件路径、catalinaBase文件路径，调用Server的init方法，Server的实现类是StandardServer，它的类继承结构是这样的，`public final class StandardServer extends LifecycleMBeanBase implements Server`,LifecycleMBeanBase是一个抽象类，继承了LifecycleBase抽象类实现Lifecycle接口，LifecycleBase抽象类实现了接口Lifecycle的`init`、`start`、`destroy`等方法、init、start方法里面分别又调用了`initInternal`、`startInternal`方法，把这些实现都留给了子类去实现，这是典型的模板方法设计模式。
 
 好，那我们现在来看看StandardServer的init方法源码，实际上是它的父类LifecycleBase的init方法，源码如下:
@@ -777,17 +817,331 @@ protected void processAnnotationWebServlet(String className, AnnotationEntry ae,
             servletName = evp.getValue().stringifyValue();
             break;
            }
+           else if ("initParams".equals(name)) {
+                Map<String,String> initParams = processAnnotationWebInitParams(evp.getValue());
+                    for (Map.Entry<String,String> entry : initParams.entrySet()) {
+                        servletDef.addInitParameter(entry.getKey(), entry.getValue());
+                    }
+                }
+            }
+            else if ("loadOnStartup".equals(name)) {
+                if (servletDef.getLoadOnStartup() == null) {
+                    servletDef.setLoadOnStartup(evp.getValue().stringifyValue());
+                }
+            }
         }
         ServletDef servletDef = new ServletDef();
         servletDef.setServletName(servletName);
         servletDef.setServletClass(className);
+        if ( urlPatterns != null) {
+            fragment.addServlet(servletDef);
+        }
+        if (urlPatterns != null) {
+            if (!fragment.getServletMappings().containsValue(servletName)) {
+                for (String urlPattern : urlPatterns) {
+                    fragment.addServletMapping(urlPattern, servletName);
+                }
+            }
+        }
 }
 ```
-先获取WebFilter注解的name名称然后赋值给变量servletName，变量evps判断是否有urlPatterns属性，代表的是Servlet的请求路径，如果有解析出来赋值给变量urlPatterns，它是一个String数组
-判断注解是否有loadOnStartup属性如果有设置到ServletDef上,判断是否有initParams属性
+先获取WebFilter注解的name名称然后赋值给变量servletName，变量evps判断是否有urlPatterns属性，代表的是Servlet的请求路径，如果有解析出来赋值给变量urlPatterns，它是一个String数组,判断注解是否有loadOnStartup属性如果有设置到ServletDef上,判断是否有initParams属性，如果有添加到ServletDef对象成员属性Map<String,String> paramete上。
+
+最后判断如果urlPatterns不为空，调用`fragment.addServlet(servletDef)`方法把servletDef添加到对象WebXml的成员属性`Map<String,ServletDef> servlet`上，如果urlPatterns不为空，调用`fragment.addServletMapping(urlPattern, servletName)`方法把key=urlPattern,value=servletName放到WebXml的成员属性`Map<String,String> servletMappings`上。
+
+此时回到processClass方法判断如果有WebFilter注解调用processAnnotationWebFilter方法进线处理，该方法源码如下:
+
+```java
+ protected void processAnnotationWebFilter(String className, AnnotationEntry ae, WebXml fragment) {
+        String filterName = null;
+        List<ElementValuePair> evps = ae.getElementValuePairs();
+        for (ElementValuePair evp : evps) {
+            String name = evp.getNameString();
+            if ("filterName".equals(name)) {
+                filterName = evp.getValue().stringifyValue();
+                break;
+            }
+        }
+        if (filterName == null) {
+            filterName = className;
+        }
+        FilterDef filterDef = fragment.getFilters().get(filterName);
+        FilterMap filterMap = new FilterMap();
+
+        if (filterDef == null) {
+            filterDef = new FilterDef();
+            filterDef.setFilterName(filterName);
+            filterDef.setFilterClass(className);
+        }
+
+        boolean urlPatternsSet = false;
+        boolean servletNamesSet = false;
+        boolean dispatchTypesSet = false;
+        String[] urlPatterns;
+
+        for (ElementValuePair evp : evps) {
+            String name = evp.getNameString();
+            if ("value".equals(name) || "urlPatterns".equals(name)) {
+                if (urlPatternsSet) {
+                    throw new IllegalArgumentException(
+                            sm.getString("contextConfig.urlPatternValue", "WebFilter", className));
+                }
+                urlPatterns = processAnnotationsStringArray(evp.getValue());
+                urlPatternsSet = urlPatterns.length > 0;
+                for (String urlPattern : urlPatterns) {
+                    filterMap.addURLPattern(urlPattern);
+                }
+            } else if ("servletNames".equals(name)) {
+                String[] servletNames = processAnnotationsStringArray(evp.getValue());
+                servletNamesSet = servletNames.length > 0;
+                for (String servletName : servletNames) {
+                    filterMap.addServletName(servletName);
+                }
+            } else if ("initParams".equals(name)) {
+                Map<String,String> initParams = processAnnotationWebInitParams(evp.getValue());
+                if (isWebXMLfilterDef) {
+                    Map<String,String> webXMLInitParams = filterDef.getParameterMap();
+                    for (Map.Entry<String,String> entry : initParams.entrySet()) {
+                        if (webXMLInitParams.get(entry.getKey()) == null) {
+                            filterDef.addInitParameter(entry.getKey(), entry.getValue());
+                        }
+                    }
+                } else {
+                    for (Map.Entry<String,String> entry : initParams.entrySet()) {
+                        filterDef.addInitParameter(entry.getKey(), entry.getValue());
+                    }
+                }
+
+            }
+        }
+
+            fragment.addFilter(filterDef);
+            if (urlPatternsSet || servletNamesSet) {
+                filterMap.setFilterName(filterName);
+                fragment.addFilterMapping(filterMap);
+            }
+       
+
+    }
+
+```
 
 
 
+先获取WebFilter注解的filterName名称然后赋值给变量filterName，创建FilterDef对象设置FilterName属性为filterName的值，设置FilterClass属性为className。
 
+判断是否有urlPatterns，如果有解析出来它的路径，调用`FilterMap`对象的addURLPattern方法，把它方法在该对象成员属性urlPatterns上，它是一个String数组结构。
 
+判断是否有servletNames属性，它代表匹配的Servelt名字，只有匹配的名字才会进行拦截，如果指定有为*代表匹配所有Servelt，设置`FilterMap`对象matchAllServletNames成员属性为true,解析出来放在`FilterMap`对象的成员属性servletNames上，它同样是一个String数组结构。
+
+判断是否有initParams属性，如果有添加到FilterDef对象成员属性Map<String,String> parameter上，调用`fragment.addFilter(filterDef)`方法把FilterDef添加到对象WebXml的成员属性`Map<String,FilterDef> filters`上,设置FilterMap成员属性filterName值为注解修饰的filterName值，调用`fragment.addFilterMapping(filterMap)`方法放到成员属性Set<FilterMap> filterMaps 上。
+
+此时回到processClass方法判断如果有WebListener注解调用`fragment.addListener(className);`把名称添加到Set<String> listeners成员属性上，这个比较简单。
+
+执行完ContextConfig解析方法会把Servlet、Filter、Listener存放在StandardContext中，此时返回到这段代码继续执行:
+
+```java
+for (Map.Entry<ServletContainerInitializer,Set<Class<?>>> entry : initializers.entrySet()) {
+                try {
+                    entry.getKey().onStartup(entry.getValue(), getServletContext());
+                } catch (ServletException e) {
+                    log.error(sm.getString("standardContext.sciFail"), e);
+                    ok = false;
+                    break;
+                }
+ }
+```
+
+此时开始真正执行业务自定义的ServletContainerInitializer的实现类的onStartup方法，该方法第一个参数是`Set<Class<?>> c`代表HandlesTypes修饰的类，第二个参数是`ServletContext`,该方法的用途主要是可以往ServletContext添加自定义Servelt，例如我下面这个例子:
+
+```java
+@HandlesTypes(A.class)
+public class MyServletContainerInitializer implements ServletContainerInitializer {
+
+    @Override
+    public void onStartup(Set<Class<?>> c, ServletContext ctx) throws ServletException {
+        System.out.println("SCI called");
+        // 动态注册一个 Servlet
+        ctx.addServlet("helloServlet", new HelloServlet())
+            .addMapping("/hello");
+    }
+}
+```
+
+这个方法执行完成以后开始调用StandardContext的listenerStart方法，该方法作用主要是实例化自定义ServletContextListener对象并调用其contextInitialized方法,源码如下:
+
+```java
+public boolean listenerStart() {
+
+        String[] listeners = findApplicationListeners();
+        Object[] results = new Object[listeners.length];
+        boolean ok = true;
+        for (int i = 0; i < results.length; i++) {
+            try {
+                String listener = listeners[i];
+                results[i] = getInstanceManager().newInstance(listener);
+            } catch (Throwable t) {
+                Throwable throwable = ExceptionUtils.unwrapInvocationTargetException(t);
+                ExceptionUtils.handleThrowable(throwable);
+                getLogger().error(sm.getString("standardContext.applicationListener", listeners[i]), throwable);
+                ok = false;
+            }
+        }
+        List<Object> lifecycleListeners = new ArrayList<>();
+        for (Object result : results) {
+            if ((result instanceof ServletContextAttributeListener) ||
+                    (result instanceof ServletRequestAttributeListener) || (result instanceof ServletRequestListener) ||
+                    (result instanceof HttpSessionIdListener) || (result instanceof HttpSessionAttributeListener)) {
+                eventListeners.add(result);
+            }
+            if ((result instanceof ServletContextListener) || (result instanceof HttpSessionListener)) {
+                lifecycleListeners.add(result);
+            }
+        }
+        ServletContextEvent event = new ServletContextEvent(getServletContext());
+        for (Object instance : instances) {
+            if (!(instance instanceof ServletContextListener)) {
+                continue;
+            }
+            ServletContextListener listener = (ServletContextListener) instance;
+            try {
+               
+                    listener.contextInitialized(event);
+            } catch (Throwable t) {
+                ExceptionUtils.handleThrowable(t);
+                fireContainerEvent("afterContextInitialized", listener);
+                getLogger().error(sm.getString("standardContext.listenerStart", instance.getClass().getName()), t);
+                ok = false;
+            }
+}
+```
+
+接着调用`filterStart`方法，实例化Filter对象，调用其init方法等操作，该方法源码如下:
+
+```java
+public boolean filterStart() {
+
+        if (getLogger().isTraceEnabled()) {
+            getLogger().trace("Starting filters");
+        }
+        // Instantiate and record a FilterConfig for each defined filter
+        boolean ok = true;
+        synchronized (filterDefs) {
+            filterConfigs.clear();
+            for (Entry<String,FilterDef> entry : filterDefs.entrySet()) {
+                String name = entry.getKey();
+                if (getLogger().isTraceEnabled()) {
+                    getLogger().trace(" Starting filter '" + name + "'");
+                }
+                try {
+                    ApplicationFilterConfig filterConfig = new ApplicationFilterConfig(this, entry.getValue());
+                    filterConfigs.put(name, filterConfig);
+                } catch (Throwable t) {
+                    Throwable throwable = ExceptionUtils.unwrapInvocationTargetException(t);
+                    ExceptionUtils.handleThrowable(throwable);
+                    getLogger().error(sm.getString("standardContext.filterStart", name), throwable);
+                    ok = false;
+                }
+            }
+        }
+
+        return ok;
+  }
+```
+
+首先遍历filterDefs的Filter定义类，然后创建一个ApplicationFilterConfig对象，它实现了FilterConfig接口，里面只有Filter对象，它的构造方法如下:
+
+```java
+ApplicationFilterConfig(Context context, FilterDef filterDef)
+            throws ClassCastException, ReflectiveOperationException, ServletException, NamingException,
+            IllegalArgumentException, SecurityException {
+
+        super();
+
+        this.context = context;
+        this.filterDef = filterDef;
+        if (filterDef.getFilter() == null) {
+            getFilter();
+        } else {
+            this.filter = filterDef.getFilter();
+            context.getInstanceManager().newInstance(filter);
+            initFilter();
+        }
+   }
+```
+
+设置成员属性Context为StandardContext对象，然后反射实例化Filter对象并调用其init方法，最后把key=Filter的name,value是ApplicationFilterConfig对象放入到StandardContext成员属性的Map<String,ApplicationFilterConfig> filterConfigs中。
+
+接着调用loadOnStartup方法，该方法主要是查找loadOnStartup大于0的Servlet(被封装为Wrapper)，调用Wrapper的load方法实例化Servlet对象并调用其init方法，这里的源码跟Filter差不多我就不贴源码了。
+
+到此处StandardContext的startInternal方法就执行完成了，最后还有一个重要步骤是在finally里面`unbindThread(oldCCL);`目的是切换当前线程的ClassLoader为Tomcat的ClassLoader方便进行后续操作。
+
+这些组件都执行完成以后还有一个组件是Connector的startInternal也比较重要，它是开启Tomcat线程的主要实现，源码如下:
+
+```java
+ protected void startInternal() throws LifecycleException {
+
+        // Validate settings before starting
+        String id = (protocolHandler != null) ? protocolHandler.getId() : null;
+        if (id == null && getPortWithOffset() < 0) {
+            throw new LifecycleException(
+                    sm.getString("coyoteConnector.invalidPort", Integer.valueOf(getPortWithOffset())));
+        }
+
+        setState(LifecycleState.STARTING);
+
+        // Configure the utility executor before starting the protocol handler
+        if (protocolHandler != null && service != null) {
+            protocolHandler.setUtilityExecutor(service.getServer().getUtilityExecutor());
+        }
+
+        try {
+            protocolHandler.start();
+        } catch (Exception e) {
+            // Includes NPE - protocolHandler will be null for invalid protocol if throwOnFailure is false
+            throw new LifecycleException(sm.getString("coyoteConnector.protocolHandlerStartFailed"), e);
+        }
+    }
+```
+
+调用了ProtocolHandler的start方法，它的实现类是Http11NioProtocol，它实现了抽象类AbstractProtocol，调用的是AbstractProtocol的start方法，然后这里是调用NioEndpoint的startInternal方法，该方法源码如下:
+
+```java
+ public void startInternal() throws Exception {
+
+        if (!running) {
+            running = true;
+            paused = false;
+            // Create worker collection
+            if (getExecutor() == null) {
+                createExecutor();
+            }
+            // Start poller thread
+            poller = new Poller();
+            Thread pollerThread = new Thread(poller, getName() + "-Poller");
+            pollerThread.setPriority(threadPriority);
+            pollerThread.setDaemon(true);
+            pollerThread.start();
+
+            startAcceptorThread();
+        }
+    }
+```
+
+首先调用createExecutor方法创建Tomcat的工作线程，即tomcat执行请求时候所需要的线程，源码如下:
+
+```java
+    public void createExecutor() {
+
+            TaskQueue taskqueue = new TaskQueue(maxQueueSize);
+            TaskThreadFactory tf = new TaskThreadFactory(getName() + "-exec-", daemon, getThreadPriority());
+            executor = new ThreadPoolExecutor(getMinSpareThreads(), getMaxThreads(), getThreadsMaxIdleTime(),
+                    TimeUnit.MILLISECONDS, taskqueue, tf);
+            taskqueue.setParent((ThreadPoolExecutor) executor);
+    }
+```
+
+自定义一个线程工厂TaskThreadFactory，线程名称是以`http-nio-8080-exec-`开头，`getMinSpareThreads`方法获取核心线程数默认是10，`getMaxThreads`方法获取最大线程数默认是200，最后把线程池对象赋值给成员属性Executor。
+
+接着创建一个Poller线程，线程名称是http-nio-8080-Poller，调用`startAcceptorThread`方法开启一个Acceptor线程，线程名称是http-nio-8080-Acceptor
 
