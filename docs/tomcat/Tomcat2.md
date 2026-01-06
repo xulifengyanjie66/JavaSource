@@ -1,4 +1,23 @@
-Tomcat的启动类是位于`org.apache.catalina.startup.Bootstrap`包下的类，会调用其main方法，该方法的源码如下:
+# Tomcat源码分析二(Tomcat启动源码分析)
+## 一、前言
+在日常使用 Tomcat 时，我们往往只关注它如何“跑起来”，却很少真正去理解 Tomcat 是如何一步一步完成启动的。
+本文从 Bootstrap 入口开始，到 Server、Service、Connector、Engine、Host、Context 的层层初始化，再到端口监听、请求接管，Tomcat 在启动过程中隐藏了大量精巧的设计与工程实践。
+
+本文将以 Tomcat 9 源码为基础，从 init() 和 start() 两个生命周期方法入手，结合调试过程，系统性地梳理 Tomcat 的启动流程，重点回答以下几个问题：
+
+- Tomcat 的启动入口在哪里？
+
+- init 和 start 在语义和职责上有什么本质区别？
+
+- Connector、Endpoint、Acceptor、Poller 分别在什么时候创建并启动？
+
+- Web 应用的 Context 是在启动阶段还是请求阶段初始化的？
+
+- 为什么 Tomcat 要频繁切换线程上下文类加载器（TCCL）？
+
+## 二、Tomcat的Bootstrap init源码分析
+
+Tomcat的启动类入口是位于`org.apache.catalina.startup.Bootstrap`包下的类，会调用其main方法，该方法的源码如下:
 
 ```java
 public static void main(String[] args) {
@@ -78,7 +97,6 @@ public void init() throws Exception {
 
         SecurityClassLoad.securityClassLoad(catalinaLoader);
 
-        // Load our startup class and call its process() method
         if (log.isTraceEnabled()) {
             log.trace("Loading startup class");
         }
@@ -108,7 +126,6 @@ public void init() throws Exception {
         try {
             commonLoader = createClassLoader("common", null);
             if (commonLoader == null) {
-                // no config file, default to this loader - we might be in a 'single' env.
                 commonLoader = this.getClass().getClassLoader();
             }
             catalinaLoader = createClassLoader("server", commonLoader);
@@ -121,7 +138,7 @@ public void init() throws Exception {
     }
 ```
 
-可以明显看出这个方法创建了三个类加载器，分别是commonLoader、catalinaLoader、sharedLoader，其中catalinaLoader、sharedLoader的父类加载器是commonLoader这正是我上篇文章说的那样的类加载器关系，那现在重点来看createClassLoader方法，它的源码如下:
+可以明显看出这个方法创建了三个类加载器，分别是CommonLoader、CatalinaLoader、SharedLoader，其中CatalinaLoader、SharedLoader的父类加载器是CommonLoader这正是我上篇文章说的那样的类加载器关系，那现在重点来看createClassLoader方法，它的源码如下:
 
 ```java
  private ClassLoader createClassLoader(String name, ClassLoader parent) throws Exception {
@@ -138,7 +155,6 @@ public void init() throws Exception {
         String[] repositoryPaths = getPaths(value);
 
         for (String repository : repositoryPaths) {
-            // Check for a JAR URL repository
             try {
                 URI uri = new URI(repository);
                 @SuppressWarnings("unused")
@@ -146,10 +162,7 @@ public void init() throws Exception {
                 repositories.add(new Repository(repository, RepositoryType.URL));
                 continue;
             } catch (IllegalArgumentException | MalformedURLException | URISyntaxException e) {
-                // Ignore
             }
-
-            // Local repository
             if (repository.endsWith("*.jar")) {
                 repository = repository.substring(0, repository.length() - "*.jar".length());
                 repositories.add(new Repository(repository, RepositoryType.GLOB));
@@ -170,7 +183,7 @@ public void init() throws Exception {
 
 catalinaLoader=sharedLoader=commonLoader。
 
-好，我们继续回到Bootstrap的init方法，执行这段代码`Thread.currentThread().setContextClassLoader(catalinaLoader);`设置当前线程类加载器是catalinaLoader，反射调用创建org.apache.catalina.startup.Catalina对象并设置Catalina的成员属性的ClassLoader为sharedLoader，最后把BootStrap对象的成员属性catalinaDaemon设置为反射创建的org.apache.catalina.startup.Catalina对象。
+好，我们继续回到Bootstrap的init方法，执行这段代码`Thread.currentThread().setContextClassLoader(catalinaLoader);`设置当前线程类加载器是CatalinaLoader，反射调用创建org.apache.catalina.startup.Catalina对象并设置Catalina的成员属性的ClassLoader为SharedLoader，最后把BootStrap对象的成员属性catalinaDaemon设置为反射创建的org.apache.catalina.startup.Catalina对象。
 
 执行到这里返回到Bootstrap的load方法，该方法里面又反射调用Catalina的load方法，该方法的源码如下:
 
@@ -212,19 +225,17 @@ public void load() {
     }
 ```
 
-先调用parseServerXml方法解析conf/server.xml配置文件，把它封装为Server对象，Server对象里面又有多个Service对象，就行server.xml那样嵌套的结构一样。
+先调用parseServerXml方法解析conf/server.xml配置文件，把它封装为Server对象，Server对象里面又有多个Service对象，该对象结构就像server.xml那样嵌套的结构一样。
 
-值得说明一点的是在实例化`StandardHost`对象时候，构造方法创建一个是这样的：
+在解析配置文件并把它们封装为各个对象时候会调用它们的构造方法，值得说明一点的是在实例化`StandardHost`对象时候，构造方法创建一个是这样的：
 
 ```java
     public StandardHost() {
-
         super();
         pipeline.setBasic(new StandardHostValve());
 
     }
 ```
-
 其中pipeline的类型是StandardPipeline，它实现了Pipeline接口，用于管理执行Valves添加和执行，这里手动实例化了StandardHostValve，后面请求的时候会调用这个类的invoke方法。
 
 同样实例化StandardContext时候，它的构造方法也是创建一个Pipeline接口，代码如下:
@@ -236,14 +247,12 @@ public StandardContext() {
     pipeline.setBasic(new StandardContextValve());
 }
 ```
-
-这里手动实例化了一个StandardContextValve对象，后面请求的时候会调用这个类的invoke方法。
+这里也手动实例化了一个StandardContextValve对象，后面请求的时候也会调用这个类的invoke方法。
 
 实例化StandardWrapper对象时候同样创建一个StandardWrapperValve对象，后面请求时候会调用这个类的invoke方法，代码如下:
 
 ```java
     public StandardWrapper() {
-
         super();
         swValve = new StandardWrapperValve();
         pipeline.setBasic(swValve);
@@ -252,11 +261,14 @@ public StandardContext() {
     }
 ```
 
+设置Server对象的Catalina、catalinaHome、catalinaBase属性分为Catalina对象、catalinaHome文件路径、catalinaBase文件路径，调用Server类的init方法，Server的实现类是StandardServer，
+它的类继承结构是这样的:
 
+![Server.png](..%2Fimg%2FServer.png)
 
-设置Server对象的Catalina、catalinaHome、catalinaBase属性分为Catalina对象、catalinaHome文件路径、catalinaBase文件路径，调用Server的init方法，Server的实现类是StandardServer，它的类继承结构是这样的，`public final class StandardServer extends LifecycleMBeanBase implements Server`,LifecycleMBeanBase是一个抽象类，继承了LifecycleBase抽象类实现Lifecycle接口，LifecycleBase抽象类实现了接口Lifecycle的`init`、`start`、`destroy`等方法、init、start方法里面分别又调用了`initInternal`、`startInternal`方法，把这些实现都留给了子类去实现，这是典型的模板方法设计模式。
+从图中可以看出它继承了LifecycleMBeanBase,LifecycleMBeanBase是一个抽象类，继承了LifecycleBase抽象类实现Lifecycle接口，LifecycleBase抽象类实现了接口Lifecycle的`init`、`start`、`destroy`等方法、init、start方法里面分别又调用了`initInternal`、`startInternal`方法，把这些实现都留给了子类去实现，这是典型的模板方法设计模式。
 
-好，那我们现在来看看StandardServer的init方法源码，实际上是它的父类LifecycleBase的init方法，源码如下:
+好，那我们现在来看看StandardServer的init方法源码，实际上是调用它的父类LifecycleBase的init方法，源码如下:
 
 ```java
     public final synchronized void init() throws LifecycleException {
@@ -273,7 +285,6 @@ public StandardContext() {
         }
     }
 ```
-
 又调用了setStateInternal方法，该方法源码如下:
 
 ```java
@@ -290,48 +301,22 @@ public StandardContext() {
 
 主要做的事情主要有:
 
-1.修改内部状态为**INITIALIZING**
+- 修改内部状态为**INITIALIZING**
 
-2.触发 `BEFORE_INIT_EVENT`
+- 触发 `BEFORE_INIT_EVENT`
 
-3.通知所有 `LifecycleListener`
+- 通知所有 `LifecycleListener`
 
 子类真正实现init逻辑主要是调用initInternal方法，它的实现类是StandardServer，该方法源码如下:
 
 ```java
 protected void initInternal() throws LifecycleException {
-
-        if (getCatalina() != null) {
-            ClassLoader cl = getCatalina().getParentClassLoader();
-            while (cl != null && cl != ClassLoader.getSystemClassLoader()) {
-                if (cl instanceof URLClassLoader) {
-                    URL[] urls = ((URLClassLoader) cl).getURLs();
-                    for (URL url : urls) {
-                        if (url.getProtocol().equals("file")) {
-                            try {
-                                File f = new File(url.toURI());
-                                if (f.isFile() && f.getName().endsWith(".jar")) {
-                                    ExtensionValidator.addSystemResource(f);
-                                }
-                            } catch (URISyntaxException | IOException e) {
-                                // Ignore
-                            }
-                        }
-                    }
-                }
-                cl = cl.getParent();
-            }
-        }
-        // Initialize our defined Services
         for (Service service : findServices()) {
             service.init();
         }
  }
 ```
-
-此处先留下if (getCatalina() != null) 逻辑，后续看明白再来补充。
-
-接着变量Service调用其init方法，只需要看它的initInternal方法，该方法源码如下:
+它这里又调用了Service类的init方法，它的实现类是StandardService，它同样是继承了LifecycleMBeanBase实现Lifecycle接口,只需要看它的initInternal方法，该方法源码如下:
 
 ```java
  protected void initInternal() throws LifecycleException {
@@ -339,8 +324,6 @@ protected void initInternal() throws LifecycleException {
         if (engine != null) {
             engine.init();
         }
-
-        // Initialize any Executors
         for (Executor executor : findExecutors()) {
             if (executor instanceof JmxEnabled) {
                 ((JmxEnabled) executor).setDomain(getDomain());
