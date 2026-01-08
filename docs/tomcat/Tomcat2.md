@@ -350,7 +350,7 @@ protected void initInternal() throws LifecycleException {
 |    线程模型    |  NIO / APR   |
 | 把请求交给容器 |    Engine    |
 
-它的initInternal源码如下:
+Connector的initInternal源码如下:
 
 ```
 protected void initInternal() throws LifecycleException {
@@ -383,7 +383,9 @@ protected void initInternal() throws LifecycleException {
 
 至此Server的init方法执行完成了，`Server.init()` 的作用：初始化整个 Tomcat 实例的“运行骨架”，创建并初始化所有 Service（包括 Engine 和 Connector），但此时还不对外提供服务。
 
-此时会调用到Catalina.start方法，该方法源码如下:
+## 三、Tomcat的Bootstrap start源码分析
+
+此时继续执行会调用到Catalina.start方法，该方法源码如下:
 
 ```java
 public void start() {
@@ -437,10 +439,10 @@ public void start() {
         }
  }
 ```
-
-首先调用的是Server的start方法，继而调用所有子节点的start方法，我们来看一下Engine的start方法，因为Server的start方法没什么逻辑，首先需要说明一下Engine不是像Server和Service直接继承Lifecycle，而是直接继承的Container接口，那么Container是什么那？为啥有的实现了 `Container`，有的实现了 `Lifecycle`，**`Container`** 解决的是请求如何被路由和处理的问题；**`Lifecycle` 解决的是「组件如何被启动、停止和管理」的问题。**只有Engine、Host、
-
-Context、Wrapper直接继承了该接口，因为它们都涉及到请求的处理,StandardEngine的startInternal方法调用了父类ContainerBase的startInternal方法，该方法源码如下:
+首先调用的是Server的start方法，继而调用所有子节点的start方法，跟执行init流程是一致的，我们来看一下Engine的start方法，因为Server的start方法没什么逻辑，首先需要说明一下Engine不是像Server和Service直接继承Lifecycle，而是直接继承的Container接口，
+那么Container是什么那？为啥有的实现了 `Container`，有的实现了 `Lifecycle`，`Container`解决的是请求如何被路由和处理的问题,`Lifecycle` 解决的是「组件如何被启动、停止和管理」的问题。只有Engine、Host、
+Context、Wrapper直接继承了该接口，因为它们都涉及到请求的处理,明白了这一点我们来看看StandardEngine的startInternal方法是如何实现的。
+它调用了父类ContainerBase的startInternal方法，该方法源码如下:
 
 ```java
  protected void startInternal() throws LifecycleException {
@@ -471,8 +473,6 @@ Context、Wrapper直接继承了该接口，因为它们都涉及到请求的处
             throw new LifecycleException(sm.getString("containerBase.threadedStartFailed"),
                     multiThrowable.getThrowable());
         }
-
-        // Start the Valves in our pipeline (including the basic), if any
         if (pipeline instanceof Lifecycle) {
             ((Lifecycle) pipeline).start();
         }
@@ -485,7 +485,6 @@ Context、Wrapper直接继承了该接口，因为它们都涉及到请求的处
         }
     }
 ```
-
 先是调用了reconfigureStartStopExecutor方法实例化一个startStopExecutor变量是InlineExecutorService，它实现了ExecutorService线程池对象，获取子Container对象数组，即是StandardHost,在异步线程池中提交调用StandardHost的start方法并调用result.get()方法阻塞获取结果，那这里就先需要看一下StandardHost的startInternal方法执行逻辑，该方法源码如下:
 
 ```java
@@ -515,7 +514,6 @@ protected void startInternal() throws LifecycleException {
         super.startInternal();
     }
 ```
-
 获取Valve集合，上篇文章说过，配置Valve是在所有执行Context之前执行用于做一些事情，比如Server.xml中的这段配置:
 
 ```xml
@@ -526,9 +524,9 @@ protected void startInternal() throws LifecycleException {
 
 用户记录日志操作,这里又在Pipeline中添加一个ErrorReportValve一个个执行。
 
-接着调用父类的startInternal方法，此时去获取StandardHost的子Container集合，此处获取的是空的，但是它发布了一个STARTING实际，HostConfig监听了
+接着调用父类的startInternal方法，此时去获取StandardHost的子Container集合，此处获取的是空的，但是它发布了一个STARTING事件，HostConfig监听了
 
-STARTING，它处理逻辑主要是添加Context，即webapps下面的所有配置，它的deployApps方法如下:
+STARTING事件，它处理逻辑主要是添加Context(Web应用)，即webapps下面的所有配置，它的deployApps方法如下:
 
 ```java
  protected void deployApps() {
@@ -537,15 +535,12 @@ STARTING，它处理逻辑主要是添加Context，即webapps下面的所有配�
         String[] filteredAppPaths = filterAppPaths(appBase.list());
         // Deploy XML descriptors from configBase
         deployDescriptors(configBase, configBase.list());
-        // Deploy WARs
         deployWARs(appBase, filteredAppPaths);
-        // Deploy expanded folders
         deployDirectories(appBase, filteredAppPaths);
     }
 ```
-
-首先调用解析deployDescriptors方法解析conf\Catalina\localhost下的配置文件，主要调用的是HostConfig的deployDescriptor方法,生成一个StandardContext对象，在生成StandardContext对象过程中实例化它的成员属性ApplicationContext context，它代表的是一个Web上下文对象，反射创建一个ContextConfig对象并把它设置为StandardContext的监听对象，当调用StandardContext的start方法时候会调用ContextConfig的webConfig解析web.xml，然后调用`host.addChild(context)`把Context加入到Host对象中,下面重点看一下StandardContext的startInternal方法，该方法源码简化如下:
-
+首先调用解析deployDescriptors方法解析conf\Catalina\localhost下的配置文件，主要调用的是HostConfig的deployDescriptor方法,调用`digester.parse`方法生成一个StandardContext对象，在生成StandardContext对象过程中实例化它的成员属性ApplicationContext context，它代表的是一个Web上下文对象，它是一个重要对象以后的Servlet都封装为Wrapper对象添加到ApplicationContext上。
+反射创建一个ContextConfig对象并把它设置为StandardContext的监听对象，当调用StandardContext的start方法时候会调用ContextConfig的webConfig解析web.xml，然后调用`host.addChild(context)`把Context加入到Host对象中,下面重点看一下StandardContext的startInternal方法，该方法源码简化如下:
 ```java
 protected void startInternal() throws LifecycleException {
     setResources(new StandardRoot(this));
@@ -562,7 +557,6 @@ protected void startInternal() throws LifecycleException {
     }
 }
 ```
-
 先说明一下StandardRoot，它是 **Tomcat 中 Web 应用的“资源视图层”，负责统一访问 Web 应用的所有资源**包括：
 
 - WEB-INF/web.xml
@@ -637,7 +631,7 @@ protected void startInternal() throws LifecycleException {
 
 此时又返回到StandardContext的startInternal方法接着执行`bindThread`方法把创建出来的ParallelWebappClassLoader绑定到当前线程。
 
-接着调用`fireLifecycleEvent(CONFIGURE_START_EVENT, null)`发布Context已经启动的监听事件，此时会调用到`ContextConfig`的configureStart方法，又调用webConfig，这个方法就比较重要了，它是解析web.xml主要方法，Listener、Filter、Servlet等解析都在这里。这里我跳一些主要的分析。
+接着调用`fireLifecycleEvent(CONFIGURE_START_EVENT, null)`发布Context已经启动的监听事件，此时会调用到`ContextConfig`的configureStart方法，又调用webConfig，这个方法就比较重要了，它是解析web.xml主要方法，Listener、Filter、Servlet等解析都在这里。这里我调一些主要的分析。
 
 首先是调用processServletContainerInitializers方法，该方法源码如下:
 
@@ -763,7 +757,6 @@ protected void processServletContainerInitializers() {
         return loadServices(serviceType, containerServiceClassNames);
  }
 ```
-
 先获取应用的父加载器的ClassLoader去$CATALINA_HOME/lib寻找`META-INF/services/javax.servlet.ServletContainerInitializer`,如果有加入到有顺序的LinkedHashSet中这样可以保证父ClassLoader加载的在前面，接着在执行自己的ClassLoader去寻找同样加入到LinkedHashSet中，然后调用loadServices方法反射创建`META-INF/services/javax.servlet.ServletContainerInitializer`指定的类并把它实例化为对象。
 
 接着执行返回到processServletContainerInitializers方法得到一个`List<ServletContainerInitializer> detectedScis`集合，遍历该集合把它放入到Map<ServletContainerInitializer,Set<Class<?>>>数据结构中，其中key是得到的ServletContainerInitializer对象，value是一个Set集合，接着判断ServletContainerInitializer上是否有HandlesTypes注解类，`@HandlesTypes` 是 **Servlet 3.0+ 中 ServletContainerInitializer的一个关键注解**，它的作用主要是 **告诉容器在启动阶段哪些类对这个 SCI 可能感兴趣**，方便容器提前扫描和传递给 `onStartup` 方法。
@@ -908,8 +901,6 @@ protected void processAnnotationWebServlet(String className, AnnotationEntry ae,
     }
 
 ```
-
-
 
 先获取WebFilter注解的filterName名称然后赋值给变量filterName，创建FilterDef对象设置FilterName属性为filterName的值，设置FilterClass属性为className。
 
@@ -1073,7 +1064,6 @@ ApplicationFilterConfig(Context context, FilterDef filterDef)
 
         setState(LifecycleState.STARTING);
 
-        // Configure the utility executor before starting the protocol handler
         if (protocolHandler != null && service != null) {
             protocolHandler.setUtilityExecutor(service.getServer().getUtilityExecutor());
         }
@@ -1081,7 +1071,6 @@ ApplicationFilterConfig(Context context, FilterDef filterDef)
         try {
             protocolHandler.start();
         } catch (Exception e) {
-            // Includes NPE - protocolHandler will be null for invalid protocol if throwOnFailure is false
             throw new LifecycleException(sm.getString("coyoteConnector.protocolHandlerStartFailed"), e);
         }
     }
@@ -1095,7 +1084,6 @@ ApplicationFilterConfig(Context context, FilterDef filterDef)
         if (!running) {
             running = true;
             paused = false;
-            // Create worker collection
             if (getExecutor() == null) {
                 createExecutor();
             }
@@ -1126,5 +1114,16 @@ ApplicationFilterConfig(Context context, FilterDef filterDef)
 
 自定义一个线程工厂TaskThreadFactory，线程名称是以`http-nio-8080-exec-`开头，`getMinSpareThreads`方法获取核心线程数默认是10，`getMaxThreads`方法获取最大线程数默认是200，最后把线程池对象赋值给成员属性Executor。
 
-接着创建一个Poller线程，线程名称是http-nio-8080-Poller，调用`startAcceptorThread`方法开启一个Acceptor线程，线程名称是http-nio-8080-Acceptor
+接着创建一个Poller线程，线程名称是http-nio-8080-Poller，调用`startAcceptorThread`方法开启一个Acceptor线程，线程名称是http-nio-8080-Acceptor。
 
+这里创建了两个线程，分别是Poller线程、Acceptor线程，Acceptor线程主要作用是负责接收请求，然后Poller线程负责处理请求中的事件，比如读写事件，这样做可以提高并发能力而不是把接收请求和处理
+请求都放在一个线程中。
+
+## 四、总结
+本文通过将启动流程拆分为 init 与 start 两个阶段，Tomcat 明确区分了“结构准备”与“运行激活”的边界，并以父容器驱动子容器的方式，逐级完成 Server、Service、Engine、Host 以及 Context 的启动，形成一条自顶向下、层次清晰的生命周期调用链。
+
+在此过程中，WebAppClassLoader 作为 Web 应用级别的类加载器，为每一个 Context 提供独立的类加载空间，通过调整传统双亲委派的加载顺序，实现了应用之间的类隔离与版本隔离，保证了多 Web 应用在同一 JVM 中的稳定共存。
+
+在 Web 3.0 规范引入的无 web.xml 配置模型下，Tomcat 通过 ServletContainerInitializer 这一容器级扩展点，在 Context 启动阶段对应用类进行统一扫描，并借助 @HandlesTypes 收集符合条件的类信息，将框架级初始化逻辑以回调的方式交由第三方框架或应用本身完成。该机制使得容器能够在不感知具体业务语义的前提下，支持复杂框架的自动装配。
+
+与之相比，@WebFilter、@WebServlet、@WebListener 等注解则属于应用级组件定义，它们在启动阶段被容器识别并完成注册，但真正的作用时机发生在运行阶段，请求到来时才参与过滤链或调用链的执行。二者职责清晰分离：前者负责“如何初始化”，后者负责“如何处理请求”。
