@@ -1,5 +1,17 @@
-在springboot自动配置类中org.springframework.boot.autoconfigure.security.servlet.SecurityFilterAutoConfiguration，注入了这样一个
-bean,代码如下:
+# Spring Security 是如何注入 Tomcat Filter 链的 —— 启动与请求源码分析
+
+## 一、前言
+在前面的文章中，我们已经从源码层面分析了 Tomcat 的启动流程、请求处理模型，以及 Spring Boot 是如何在嵌入式 Tomcat 场景下完成 Servlet 和 Filter 注册的。
+
+在此基础上，一个自然的问题是：
+像 Spring Security 这样的安全框架，是如何介入 Tomcat 的 Filter 链，并在请求到达业务代码之前完成认证和鉴权的？
+
+本文将以 Tomcat 的 Filter 机制为起点，结合 Spring Security 的启动流程，深入分析 Spring Security 的 Filter 是如何被创建、注册到 Tomcat 中的，以及一次请求是如何在 Security FilterChain 中流转的。
+
+## 二、DelegatingFilterProxy注册到Tomcat和Spring Security启动源码
+
+在Springboot自动配置类中org.springframework.boot.autoconfigure.security.servlet.SecurityFilterAutoConfiguration，注入了这样一个
+bean对象,代码如下:
 
 ```java
 	@Bean
@@ -14,7 +26,7 @@ bean,代码如下:
 	}
 ```
 
-它注入到容器的条件是需要存在一个名称为`springSecurityFilterChain`的Bean,那么先来看这个bean是在哪里注入的那,它是在配置类`org.springframework.security.config.annotation.web.configuration.WebSecurityConfiguration`中通@Bean方式注入的，源码如下:
+可以看出它注入到容器的条件是需要存在一个名称为`springSecurityFilterChain`的Bean,那么先来看这个bean是在哪里注入的那,它是在配置类`org.springframework.security.config.annotation.web.configuration.WebSecurityConfiguration`中通@Bean方式注入的，源码如下:
 
 ```java
 @Bean(name = AbstractSecurityWebApplicationInitializer.DEFAULT_FILTER_NAME)
@@ -37,7 +49,6 @@ bean,代码如下:
 		return this.webSecurity.build();
 	}
 ```
-
 指定bean的名称是`springSecurityFilterChain`,其中`securityFilterChains`是通过依赖注入进来的，代码如下:
 
 ```java
@@ -46,8 +57,8 @@ bean,代码如下:
 		this.securityFilterChains = securityFilterChains;
 	}
 ```
-
-最终返回的是一个`FilterChainProxy`对象，它实现了`Filter`对象，虽然它实现了`Filter`对象，但是它没有加入到Tomcat的容器中，真正加入Tomcat的Filter是`DelegatingFilterProxyRegistrationBean`代表的Filter，原理就是它实现了`ServletContextInitializer`接口，上文我分析了SpringBoot嵌入Tomcat原理并加入Servelt和Filter逻辑可知会调用`DelegatingFilterProxyRegistrationBean`的`getFilter`方法把`DelegatingFilterProxy`类加入到Tomcat的容器中，它同样实现了`Filter`接口，它的源码如下:
+最终返回的是一个`FilterChainProxy`对象，它实现了`Filter`对象，虽然它实现了`Filter`对象，但是它没有加入到Tomcat的容器中，真正加入Tomcat的Filter是`DelegatingFilterProxyRegistrationBean`代表的Filter，原理就是它实现了`ServletContextInitializer`接口，上文我分析了SpringBoot嵌入Tomcat原理并加入Servlet和Filter逻辑可知会调用`DelegatingFilterProxyRegistrationBean`的`getFilter`方法把`DelegatingFilterProxy`类加入到Tomcat的容器中，
+它同样实现了`Filter`接口，它的源码如下:
 
 ```java
 	public DelegatingFilterProxy getFilter() {
@@ -61,10 +72,11 @@ bean,代码如下:
 		};
 	}
 ```
+而DelegatingFilterProxy持有`Spring`容器中的name名称是`springSecurityFilterChain`所代表的FilterChainProxy对象，这样就把Tomcat容器和Spring容器关联起来了，如果有请求先是被Tomcat注册的Filter类DelegatingFilterProxy处理，然后可以把请求转发给FilterChainProxy处理，这个主要大前提理解了就能捋顺后面的处理逻辑了。
 
-而DelegatingFilterProxy持有`Spring`容器中的`springSecurityFilterChain`对象，这样就把Tomcat容器和Spring容器关联起来了，如果有请求先是DelegatingFilterProxy处理，然后可以把请求转发给springSecurityFilterChain处理，这个主要大前提理解了就能捋顺后面的处理逻辑了。
+上面说到`FilterChainProxy`会自动调用`setFilterChains`方法注入一个集合对象`List<SecurityFilterChain>`，这个可以在自己项目中自定义。
 
-`securityFilterChains`在实际项目中会自己配置，例如我的一个配置是如下这样的：
+我的项目配置SecurityFilterChain是如下这样的：
 
 ```java
     @Bean
@@ -109,8 +121,9 @@ bean,代码如下:
         return httpSecurity.build();
     }
 ```
+其中HttpSecurity对象也是通过自动配置类配置好的，这里我就不详细讲解这个配置了。
 
-这里我挑一些重点得说执行这段代码`exceptionHandling(c -> c.authenticationEntryPoint(authenticationEntryPoint)`,`exceptionHandling`的方法签名如下:
+我挑一些重点得说执行这段代码`exceptionHandling(c -> c.authenticationEntryPoint(authenticationEntryPoint)`,`exceptionHandling`的方法签名如下:
 
 ```java
 public HttpSecurity exceptionHandling(
@@ -128,8 +141,7 @@ public HttpSecurity exceptionHandling(
 		return this;
 	}
 ```
-
-最终把AuthenticationEntryPoint对象设置到ExceptionHandlingConfigurer的成员属性上，`AuthenticationEntryPoint`主要是处理用户没登录时候，例如我这个项目就是在用户没登录时候返回给用户404提示。
+最终把AuthenticationEntryPoint对象设置到ExceptionHandlingConfigurer的成员属性上，`AuthenticationEntryPoint`主要是处理用户没登录时候返回给前端的处理逻辑，例如我这个项目就是在用户没登录时候返回给用户404提示。
 
 ```java
     public void commence(HttpServletRequest request, HttpServletResponse response, AuthenticationException e) {
@@ -183,14 +195,15 @@ matchers.add(new DeferredRequestMatcher(() -> resolve(ant, mvc, servletContext),
 ```
 创建一个DeferredRequestMatcher对象，意思是现在不决定用 Ant 还是 MVC，等“第一次请求来时”再决定
 最后调用`requestMatchers(matchers.toArray(new RequestMatcher[0]))`最后返回`new AuthorizedUrl(requestMatchers)`,AuthorizedUrl包装了RequestMatcher对象
-requestMatchers方法执行返回以后调用permitAll方法，该方法源码如下:
+requestMatchers方法执行返回以后会调用permitAll方法，该方法源码如下:
 ```java
 	public AuthorizationManagerRequestMatcherRegistry permitAll() {
 			return access(permitAllAuthorizationManager);
     }
 ```
 其中permitAllAuthorizationManager是一个Lambda表达式，它的声明是这样的：`static final AuthorizationManager<RequestAuthorizationContext> permitAllAuthorizationManager = (a,
-o) -> new AuthorizationDecision(true);`可以看出它返回一个true对象的AuthorizationDecision代表不拦截，这个再分析请求时候再分析。
+o) -> new AuthorizationDecision(true);`可以看出它返回一个true对象的AuthorizationDecision代表不拦截，这个在分析请求时候就可以看到它的用处。
+
 再来看看access方法源码:
 ```java
 public AuthorizationManagerRequestMatcherRegistry access(
@@ -244,7 +257,7 @@ public Builder add(RequestMatcher matcher, AuthorizationManager<RequestAuthoriza
 			return access(AuthenticatedAuthorizationManager.authenticated());
    }
 ```
-AuthenticatedAuthorizationManager.authenticated()对象的实现是AuthenticatedAuthorizationManager，它与permitAll代表的Manager不同，它是需要校验是否有认证信息
+AuthenticatedAuthorizationManager.authenticated()对象的实现是AuthenticatedAuthorizationManager，它与permitAll代表的Manager不同，它是需要校验是否有认证信息的
 这个在请求时候在做具体分析，最终还是调用AuthorizationManagerRequestMatcherRegistry.access方法把AnyRequestMatcher、AuthenticatedAuthorizationManager放到List<RequestMatcherEntry<AuthorizationManager<RequestAuthorizationContext>>>成员属性上
 最后调用httpSecurity.build()方法，该方法源码如下:
 ```java
@@ -292,11 +305,13 @@ public void configure(H http) {
 }
 ```
 先调用AuthorizationManagerRequestMatcherRegistry对象的createAuthorizationManager方法，该方法主要是创建一个RequestMatcherDelegatingAuthorizationManager对象并把List<RequestMatcherEntry<AuthorizationManager<RequestAuthorizationContext>>> mappings对象
-传递给它的成员变量，最终在创建一个ObservationAuthorizationManager对象里面包装RequestMatcherDelegatingAuthorizationManager对象，这两个类都是实现了AuthorizationManager类，它们是组合关系，真正实现的逻辑在于RequestMatcherDelegatingAuthorizationManager对象。
+传递给它的成员变量。
+
+最终再创建一个ObservationAuthorizationManager对象里面包装RequestMatcherDelegatingAuthorizationManager对象，这两个类都是实现了AuthorizationManager类，它们是组合关系，真正实现的逻辑在于RequestMatcherDelegatingAuthorizationManager对象。
+
 接着创建AuthorizationFilter对象，它是一个Filter对象，把ObservationAuthorizationManager传递给它的成员变量，调用getSecurityContextHolderStrategy方法获取SecurityContextHolderStrategy对象，它的实现是TransmittableThreadLocalSecurityContextHolderStrategy，这个类是我项目自定义的类，它里面的ThreadLocal实现是阿里巴巴的
 TransmittableThreadLocal，这个类可以不同线程池中持有某个资源，比如认证信息，把TransmittableThreadLocalSecurityContextHolderStrategy也设置到Filter对象成员属性上,最后把AuthorizationFilter
 添加到HttpSecurity上。
-
 
 再来看一下AnonymousConfigurer的方法源码，它的源码处理逻辑是在init和configure里面都有，下面分别贴出源码:
 ```java
@@ -320,7 +335,7 @@ public void init(H http) {
 	}
 ```
 主要是实例化一个AnonymousAuthenticationFilter对象，设置成员属性principal为anonymousUser、List<GrantedAuthority> authorities为ROLE_ANONYMOUS、设置SecurityContextHolderStrategy然后把这个Filter添加到
-HttpSecurity中，这个Filter主要作用是即使没登陆也放个Authentication对象，后面请求我会具体分析。
+HttpSecurity中，这个Filter主要作用是即使没登陆也放个Authentication认证对象，后面请求我会具体分析。
 
 好到这里开始执行doBuild方法里面的performBuild，该方法源码如下:
 ```java
@@ -338,118 +353,9 @@ protected DefaultSecurityFilterChain performBuild() {
 
 ![Filter.png](..%2Fimg%2FFilter.png)
 
+## 三、Spring Security请求源码分析
 
-先看一下`HttpSecurity`是如何构造出来的，它是在`HttpSecurityConfiguration`自动配置类中通过@Bean的方式创建的，代码如下:
-
-```java
-@Bean(HTTPSECURITY_BEAN_NAME)
-	@Scope("prototype")
-	HttpSecurity httpSecurity() throws Exception {
-		LazyPasswordEncoder passwordEncoder = new LazyPasswordEncoder(this.context);
-		AuthenticationManagerBuilder authenticationBuilder = new DefaultPasswordEncoderAuthenticationManagerBuilder(
-				this.objectPostProcessor, passwordEncoder);
-		authenticationBuilder.parentAuthenticationManager(authenticationManager());
-		authenticationBuilder.authenticationEventPublisher(getAuthenticationEventPublisher());
-		HttpSecurity http = new HttpSecurity(this.objectPostProcessor, authenticationBuilder, createSharedObjects());
-		WebAsyncManagerIntegrationFilter webAsyncManagerIntegrationFilter = new WebAsyncManagerIntegrationFilter();
-		webAsyncManagerIntegrationFilter.setSecurityContextHolderStrategy(this.securityContextHolderStrategy);
-		http
-			.csrf(withDefaults())
-			.addFilter(webAsyncManagerIntegrationFilter)
-			.exceptionHandling(withDefaults())
-			.headers(withDefaults())
-			.sessionManagement(withDefaults())
-			.securityContext(withDefaults())
-			.requestCache(withDefaults())
-			.anonymous(withDefaults())
-			.servletApi(withDefaults())
-			.apply(new DefaultLoginPageConfigurer<>());
-		http.logout(withDefaults());
-		// @formatter:on
-		applyCorsIfAvailable(http);
-		applyDefaultConfigurers(http);
-		return http;
-	}
-```
-它的成员方法自动Autowired一些对象，主要是有以下:
-```java
-	@Autowired
-	void setObjectPostProcessor(ObjectPostProcessor<Object> objectPostProcessor) {
-		this.objectPostProcessor = objectPostProcessor;
-	}
-
-	@Autowired
-	void setAuthenticationConfiguration(AuthenticationConfiguration authenticationConfiguration) {
-		this.authenticationConfiguration = authenticationConfiguration;
-	}
-
-	@Autowired
-	void setApplicationContext(ApplicationContext context) {
-		this.context = context;
-	}
-```
-`AuthenticationConfiguration`主要是调用它的方法`authenticationManagerBuilder`创建一个`AuthenticationManagerBuilder`对象，它主要是
-创建`AuthenticationManager`,允许内置内存认证、LDAP认证、基于JDBC的认证,该方法源码如下:
-```java
-@Bean
-	public AuthenticationManagerBuilder authenticationManagerBuilder(ObjectPostProcessor<Object> objectPostProcessor,
-			ApplicationContext context) {
-		LazyPasswordEncoder defaultPasswordEncoder = new LazyPasswordEncoder(context);
-		AuthenticationEventPublisher authenticationEventPublisher = getAuthenticationEventPublisher(context);
-		DefaultPasswordEncoderAuthenticationManagerBuilder result = new DefaultPasswordEncoderAuthenticationManagerBuilder(
-				objectPostProcessor, defaultPasswordEncoder);
-		if (authenticationEventPublisher != null) {
-			result.authenticationEventPublisher(authenticationEventPublisher);
-		}
-		return result;
-}
-```
-它的成员方法也自动Autowired一些对象，主要有以下:
-```java
-    @Autowired(required = false)
-    public void setGlobalAuthenticationConfigurers(List<GlobalAuthenticationConfigurerAdapter> configurers) {
-        configurers.sort(AnnotationAwareOrderComparator.INSTANCE);
-        this.globalAuthConfigurers = configurers;
-    }
-    
-    @Autowired
-    public void setApplicationContext(ApplicationContext applicationContext) {
-        this.applicationContext = applicationContext;
-    }
-    
-    @Autowired
-    public void setObjectPostProcessor(ObjectPostProcessor<Object> objectPostProcessor) {
-        this.objectPostProcessor = objectPostProcessor;
-    }
-```
-其中`GlobalAuthenticationConfigurerAdapter`主要是配置`AuthenticationManagerBuilder`的,它有三个实现类，如下图所示:
-
-![GlobalAuthentication.png](..%2Fimg%2FGlobalAuthentication.png)
-它们主要用在实例化`AuthenticationManager`过程中配置`AuthenticationManagerBuilder`的，源码如下:
-```java
-public AuthenticationManager getAuthenticationManager() throws Exception {
-		if (this.authenticationManagerInitialized) {
-			return this.authenticationManager;
-		}
-		AuthenticationManagerBuilder authBuilder = this.applicationContext.getBean(AuthenticationManagerBuilder.class);
-		if (this.buildingAuthenticationManager.getAndSet(true)) {
-			return new AuthenticationManagerDelegator(authBuilder);
-		}
-		for (GlobalAuthenticationConfigurerAdapter config : this.globalAuthConfigurers) {
-			authBuilder.apply(config);
-		}
-		this.authenticationManager = authBuilder.build();
-		if (this.authenticationManager == null) {
-			this.authenticationManager = getAuthenticationManagerBean();
-		}
-		this.authenticationManagerInitialized = true;
-		return this.authenticationManager;
-}
-```
-遍历GlobalAuthenticationConfigurerAdapter集合，然后调用authBuilder.apply(config),该方法主要是把GlobalAuthenticationConfigurerAdapter添加到对象AuthenticationManagerBuilder成员
-变量`LinkedHashMap<Class<? extends SecurityConfigurer<O, B>>, List<SecurityConfigurer<O, B>>> configurers = new LinkedHashMap<>();`中
-
-请求源码分析，我这个项目请求先经过我自定义的TokenAuthenticationFilter，我是通过校验请求传递的Token去查询redis里面是否有有效token如果有构造一个LoginUser对象，然后创建一个
+首先我这个项目请求先经过我自定义的TokenAuthenticationFilter，我是通过校验请求传递的Token去查询Redis里面是否有有效token如果有构造一个LoginUser对象，然后创建一个
 UsernamePasswordAuthenticationToken对象，代码如下:
 ```java
     private static Authentication buildAuthentication(LoginUser loginUser, HttpServletRequest request) {
@@ -483,8 +389,8 @@ UsernamePasswordAuthenticationToken对象，代码如下:
         return ctx;
     }
   ```
-从ThreadLocal中取出SecurityContext,如果当前用户已经登录那ctx指定不为空直接返回，如果没登录就调用createEmptyContext创建一个SecurityContextImpl对象然后设置到
-ThreadLocal中。
+从ThreadLocal中取出SecurityContext,如果当前用户已经登录那ctx指定不为空直接返回，如果没登录就调用createEmptyContext创建一个SecurityContextImpl对象然后设置到 ThreadLocal中。
+
 接着调用defaultWithAnonymous方法该方法源码如下:
 ```java
 private SecurityContext defaultWithAnonymous(HttpServletRequest request, SecurityContext currentContext) {
@@ -607,7 +513,7 @@ ThreadLocal中的Authentication对象，RequestMatcherDelegatingAuthorizationMan
 		return DENY;
 	}
 ```
-根据请求的url路径匹配AuthorizationManager，前面分析过对于PermitAll修饰的注册的是这样一个Lambda表达式 AuthorizationManager<RequestAuthorizationContext> permitAllAuthorizationManager = (a, o) -> new AuthorizationDecision(true)，对于需要认证的是注册的是AuthenticatedAuthorizationManager,现在分别分析它两的不同之处
+根据请求的url路径匹配AuthorizationManager，前面分析过对于PermitAll修饰的注册的是这样一个Lambda表达式 `AuthorizationManager<RequestAuthorizationContext> permitAllAuthorizationManager = (a, o) -> new AuthorizationDecision(true)`，对于需要认证的是注册的是AuthenticatedAuthorizationManager,现在分别分析它两的不同之处
 先看AuthenticatedAuthorizationManager,它的check源码如下:
 ```java
 public AuthorizationDecision check(Supplier<Authentication> authentication, T object) {
@@ -627,4 +533,9 @@ public AuthorizationDecision check(Supplier<Authentication> authentication, T ob
 判断当前认证信息的Token是不是AnonymousAuthenticationToken如果是说明需要认证的url是没有登录的，返回new AuthorizationDecision(granted)对象，其中granted值是false,如果登录了granted值是true,
 根据这个值判断是否抛出认证失败异常，如果认证失败抛出AccessDeniedException异常，ExceptionTranslationFilter会捕获异常信息然后调用上面注册的AuthenticationEntryPoint对象的commence方法返回给前端一个登录异常提示。
 
+## 四、结束语
+通过对 Spring Security 启动和请求流程的分析可以看到，安全框架并不是绕过 Tomcat 实现权限控制，而是严格建立在 Servlet Filter 机制 之上。
 
+Spring Security 在容器启动阶段完成 FilterChain 的构建，并通过标准扩展点将其注册到 Tomcat 的 Filter 链中；在请求阶段，则通过一层层 Security Filter 对请求进行拦截和处理。
+
+当从容器视角重新审视 Spring Security 时，那些看似复杂的安全流程，其实只是一次次标准的 Filter 调用而已。
