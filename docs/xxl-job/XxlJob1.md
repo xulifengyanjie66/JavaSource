@@ -1,3 +1,11 @@
+# XXL-JOB执行器启动与注册源码分析
+
+## 一、前言
+
+在分布式任务调度架构中，XXL-JOB 以其轻量级、易集成的特性被广泛应用于定时任务的管理与执行。本文将从源码层面深入分析其执行器（Executor）的启动机制，特别是通过 XxlJobSpringExecutor 这一 Spring Bean 的配置与初始化过程。我们将重点探讨其配置参数的实际作用、执行器的注册流程，以及底层 Netty 服务与调度中心（Admin）的通信机制，帮助开发者更好地理解其内部工作原理。
+
+## 二、启动注册源码分析
+
 项目中一般配置xxl-job都是写一个这样的自动配置Bean,代码如下:
 ```java
 @Bean
@@ -79,7 +87,7 @@ logRetentionDays: 30
 ![xxl-job.png](..%2Fimg%2Fxxl-job.png)
 
 可以看出它继承了XxlJobExecutor类，实现了ApplicationContextAware、SmartInitializingSingleton、DisposableBean接口，
-这由spring原理可以知道再初始化XxlJobSpringExecutor时候可以注入ApplicationContext的对象，再完成所有Bean实例化初始化后会调用对象的
+这由Spring原理可以知道再初始化XxlJobSpringExecutor时候可以注入ApplicationContext的对象，再完成所有Bean实例化初始化后会调用对象的
 afterSingletonsInstantiated方法，现在我们就重点分析一下这个方法，它是执行注册的关键逻辑,它的源码如下:
 ```java
  public void afterSingletonsInstantiated() {
@@ -179,10 +187,7 @@ jobHandlerRepository上，它是一个ConcurrentMap结构，`private static Conc
 
         // init JobLogFileCleanThread
         JobLogFileCleanThread.getInstance().start(logRetentionDays);
-
-        // init TriggerCallbackThread
-        TriggerCallbackThread.getInstance().start();
-
+        
         // init executor-server
         initEmbedServer(address, ip, port, appname, accessToken);
     }
@@ -210,8 +215,6 @@ private void initAdminBizList(String adminAddresses, String accessToken) throws 
 循环adminAddresses的地址以逗号分隔把遍历的地址和accessToken封装为AdminBizClient对象添加到静态集合List<AdminBiz>中。
 
 接着调用`JobLogFileCleanThread.getInstance().start(logRetentionDays)`方法启动一个定时线程删除过期的日志这里就不详细分析了。
-
-`TriggerCallbackThread.getInstance().start()`方法先放在这。
 
 接着调用`initEmbedServer`方法，该方法源码如下:
 ```java
@@ -310,7 +313,7 @@ public void start(final String address, final int port, final String appname, fi
         thread.start();
     }
 ```
-创建一个ExecutorBizImpl对象，接着启动一个线程，在run方法里面启动Netty服务并且创建一个业务线程池ThreadPoolExecutor用于执行后续业务操作,这里的Netty是启动的Http服务器，监听Http请求的。
+创建一个ExecutorBizImpl对象，它是执行业务的关键类，接着启动一个线程，在run方法里面启动Netty服务并且创建一个业务线程池ThreadPoolExecutor用于执行后续业务操作,这里的Netty是启动的Http服务器，监听Http请求的。
 当有http请求时候会由HttpServerCodec、HttpObjectAggregator解析解码为Java对象然后传给EmbedHttpServerHandler的Handler做业务处理。
 
 启动完成以后会调用startRegistry方法向Admin发起注册请求，该方法源码如下:
@@ -372,3 +375,7 @@ public void start(final String appname, final String address){
 ```
 可以看出如果没有停止的话toStop是false是一个while的死循环目的是定时发送心跳到Admin,定时心跳时间是30秒,发送的参数是封装为RegistryParam对象，该对象
 属性主要是registryGroup=executor、registryKey=appname、registryValue=address,然后循环高可用Admin列表循环注册。
+
+### 三、结束语
+
+希望通过本文的讲解，你能对 XXL-JOB 的执行器启动、注册流程和关键配置有更清晰的理解。掌握这些底层机制，不仅能帮助我们更好地定位问题，还能在复杂网络环境或容器化部署中做出合适的配置调整。如果你有相关疑问或补充，欢迎一起交流讨论！
